@@ -47,3 +47,6 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# MacOS Annoying DS_Store
+.DS_Store
