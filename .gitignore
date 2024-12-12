@@ -50,3 +50,6 @@ rsconnect/
 
 # MacOS Annoying DS_Store
 .DS_Store
+
+# Duplicated scripts/files?
+._*
