@@ -1,0 +1,183 @@
+//This is derived from the Classification/Uncertainty script that was used to create
+    // Figure 3e,f in Stahl et al. (2021).
+
+// *** The purpose of this script is to generate uncertainty classes by querying
+    //  assets garnered from running random forest models using spectral/aerial
+    // imagery from dfiferent year and the script also computes area-based 
+    // statistics for the uncertainty classes.
+
+// Before running this script, one must import classified images for each year
+    // from Assets, here each is assigned to a variable named "class19",
+    // "class18", and so on. One must also import a shapefile of the study area
+    // (e.g., winthrop_aoi). See example list of imports below.
+var ROI = ee.FeatureCollection("projects/ee-joebrezze/assets/winthrop_aoi");
+var class16 = ee.Image("projects/ee-joebrezze/assets/winthrop_rhab2016");
+var class17 = ee.Image("projects/ee-joebrezze/assets/winthrop_rhab2017");
+var class18 = ee.Image("projects/ee-joebrezze/assets/winthrop_rhab2018");
+var class19 = ee.Image("projects/ee-joebrezze/assets/winthrop_rhab2019");
+var class20 = ee.Image("projects/ee-joebrezze/assets/winthrop_rhab2020");
+var class21 = ee.Image("projects/ee-joebrezze/assets/winthrop_rhab2021");
+var class22 = ee.Image("projects/ee-joebrezze/assets/winthrop_rhab2022");
+var class23 = ee.Image("projects/ee-joebrezze/assets/winthrop_rhab2023");
+
+
+// Set visualization parameters for the classified images.
+var ClassParam = {min: 0, max: 2, palette: ["373e8d","ffc772"],
+                      opacity: 0.6};
+
+// Set map center and display classified images for visual reference.
+Map.setCenter(-121.5, 48.6, 8);
+Map.addLayer(class17.clip(ROI), ClassParam, 'Class 2017', false);
+Map.addLayer(class19.clip(ROI), ClassParam, 'Class 2019', false);
+Map.addLayer(class21.clip(ROI), ClassParam, 'Class 2021', false);
+Map.addLayer(class23.clip(ROI), ClassParam, 'Class 2023', false);
+
+// ***Create uncertainty classes using an expression, display.
+  // first, concatenate classified images into single multiband image.
+  var concatYears = ee.Image.cat([class17, class19, class21, class23]);
+  print(concatYears);         //comment out unless needed to check output
+
+  // Select and rename bands to user-friendly names.
+  var diffYears = concatYears.select(
+      ['classification', 'classification_1', 'classification_2', 'classification_3'], // old names
+      ['class17', 'class19', 'class21', 'class23']               // new names
+  );
+  print(diffYears);       //comment out unless needed to check output
+
+
+// Set color palette for the change classes we will create.
+   var palette = ['white', // 0 = not classified
+                 '#CDE5F8',  // 1 = "not rocky" in all 4 years
+                 '#FFEA00', // 2 = "rocky" in 1 years
+                 '#FFCB2E', // 3 = "rocky" in 2 years
+                 '#FF8567', // 4 = "rocky" in 3 years
+                 'black']; // 5 = "rocky" in all 4 years
+
+
+
+// Create a series of nested conditional statements to create the desired change classes.
+var stabilityExp = diffYears.expression(
+  "(b('class17') == 0) && (b('class19') == 0) && (b('class21') == 0) && (b('class23') == 0) ? 1" +
+    ": (b('class17') == 1) && (b('class19') == 1) && (b('class21') == 1) && (b('class23') == 1) ? 5" +
+      ": (b('class17') == 1) && (b('class19') == 0) && (b('class21') == 0) && (b('class23') == 0) ? 2" +
+      ": (b('class17') == 0) && (b('class19') == 1) && (b('class21') == 0) && (b('class23') == 0) ? 2" +
+      ": (b('class17') == 0) && (b('class19') == 0) && (b('class21') == 1) && (b('class23') == 0) ? 2" +
+      ": (b('class17') == 0) && (b('class19') == 0) && (b('class21') == 0) && (b('class23') == 1) ? 2" +
+      ": (b('class17') == 1) && (b('class19') == 1) && (b('class21') == 0) && (b('class23') == 0) ? 3" +
+      ": (b('class17') == 1) && (b('class19') == 0) && (b('class21') == 1) && (b('class23') == 0) ? 3" +
+      ": (b('class17') == 1) && (b('class19') == 0) && (b('class21') == 0) && (b('class23') == 1) ? 3" +
+      ": (b('class17') == 0) && (b('class19') == 1) && (b('class21') == 1) && (b('class23') == 0) ? 3" +
+      ": (b('class17') == 0) && (b('class19') == 1) && (b('class21') == 0) && (b('class23') == 1) ? 3" +
+      ": (b('class17') == 0) && (b('class19') == 0) && (b('class21') == 1) && (b('class23') == 1) ? 3" +
+      ": (b('class17') == 1) && (b('class19') == 1) && (b('class21') == 1) && (b('class23') == 0) ? 4" +
+      ": (b('class17') == 1) && (b('class19') == 1) && (b('class21') == 0) && (b('class23') == 1) ? 4" +
+      ": (b('class17') == 1) && (b('class19') == 0) && (b('class21') == 1) && (b('class23') == 1) ? 4" +
+      ": (b('class17') == 0) && (b('class19') == 1) && (b('class21') == 1) && (b('class23') == 1) ? 4" +
+  ": 0"
+);
+
+// Clip the change classification to the study area.
+var class_ROI = stabilityExp.clipToCollection(ROI);
+    
+// Display the cover change classification as a map layer using the color palette.
+Map.addLayer(class_ROI, {min: 0, max: 5, palette: palette},
+      'stability classes 2017-2023', false);
+
+
+//  LEGEND
+// Legend function to create legend rows
+var makeLegendRow = function(color, name) {
+      // Create the label that is actually the colored box.
+      var colorBox = ui.Label({
+        style: {
+          backgroundColor: '#' + color,
+          // Use padding to give the box height and width.
+          padding: '5px',
+          margin: '0 0 4px 0px'    // top, right, bottom, left
+        }
+      });
+      // Create the label filled with the description text.
+      var description = ui.Label({
+        value: name,
+        style: {
+          margin: '0 0 4px 6px',    // top, right, bottom, left
+          fontSize: '10px'
+        }
+      });
+      // return the panel
+      return ui.Panel({
+        widgets: [colorBox, description],
+        layout: ui.Panel.Layout.Flow('horizontal')
+      });
+};
+// Style
+var legend_label_style = {
+  fontSize: '12px',
+  margin: '0px 0px 4px 0px',      // top, right, bottom, left
+  fontWeight: 'bold',
+  textAlign: 'left',
+  position: 'top-center'
+};
+// Legend title
+var legendTitle = ui.Label('Classification Stability; Temporal Change', legend_label_style);
+// Colors and Labels
+var clr_1 = 'CDE5F8'; var name_1 = 'Not Rocky';
+var clr_2 = 'FFEA00'; var name_2 = 'Rocky 1/4 Years; R > NR'; //
+var clr_3 = 'FFCB2E'; var name_3 = 'Rocky 2/4 Years; Unstable'; // 
+var clr_4 = 'FF8567'; var name_4 = 'Rocky 3/4 Years; NR > R'; // 
+var clr_5 = '000000'; var name_5 = 'Rocky';
+// Legend items
+var item1 = makeLegendRow(clr_1, name_1);
+var item2 = makeLegendRow(clr_2, name_2);
+var item3 = makeLegendRow(clr_3, name_3);
+var item4 = makeLegendRow(clr_4, name_4);
+var item5 = makeLegendRow(clr_5, name_5);
+var legend_items = [legendTitle, item1, item2, item3, item4, item5];
+// Create legend panel
+var legend_panel = ui.Panel({
+  layout: ui.Panel.Layout.flow('vertical'),
+  widgets: legend_items,
+  style: {
+    // width: '150px',
+    position: 'bottom-right'
+  }
+});
+// Add legend panel to left panel
+Map.add(legend_panel);
+
+// *Compute area of each cover change class for the study area.
+    // NOTE: the following section of code can be repeated for any subset of
+    // the study area. To do so replace "ROI" with the area of interest.
+
+    // Add a band to the classified image so that we can compute areas.
+    var addArea = ee.Image.pixelArea().addBands(class_ROI);
+
+    // Use a Reducer to compute the area occupied by each cover change class in
+      // the study area.
+    var class_areas = addArea.reduceRegion({
+        reducer: ee.Reducer.sum().group({
+          groupField: 1,
+          groupName: 'class_ROI',
+        }),
+        geometry: ROI,
+        scale: 10,
+        bestEffort: true,
+      });
+
+      // Display the area calculation outputs in the Console.
+      print('area per uncertainty class', class_areas);
+
+
+// Export cover change classification. This line can be used to export the
+    // cover change classification to Google Drive, where it can be downloaded
+    // as a georeferenced TIFF file, or to Assets, from where it can be Imported
+    // into other GEE scripts for further analysis, to share with others or to be
+    // accessed by GEE Apps.
+    Export.image.toDrive({
+               image: class_ROI,
+               description: 'winthrop_rhab_stability',
+               scale: 10,
+               maxPixels: 1e9,
+               region: ROI,
+               folder: 'GEE_downloads'
+               });
