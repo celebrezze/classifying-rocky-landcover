@@ -1,0 +1,191 @@
+---
+title: "Points and Band Values"
+author: "Joe Celebrezze"
+date: "2024-04-15"
+output: html_document
+---
+
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(here)
+library(GGally)
+library(raster)
+library(caret)
+library(ggridges)
+here = here::here
+select = dplyr::select
+extract = raster::extract
+```
+
+# Data Wrangling
+## Function
+To merge bands and presence and to do some data cleaning
+```{r}
+bands_presence_clean <- function(bands.df, presence.df){
+bands.df <- bands.df %>% 
+  mutate(system.index = str_remove(system.index, '_0')) %>% 
+  mutate(coords = str_remove(.geo, '"geodesic":false,"type":"Point","coordinates"')) %>% 
+  mutate(coords = str_replace_all(coords, '[{:}]', ''))
+
+bands.df$coords <- gsub('^.|.$', '', bands.df$coords)
+bands.df$x <- str_split_fixed(bands.df$coords, ',', n = 2)[,1]
+bands.df$y <- str_split_fixed(bands.df$coords, ',', n = 2)[,2]
+
+points_df <- merge(bands.df, presence.df, by = c('system.index')) %>% 
+  select(-system.index, -.geo.x, -.geo.y) %>% 
+  rename(presence = Presence) %>% 
+  mutate(presence = as.factor(presence), x = as.numeric(x), y = as.numeric(y))
+return(points_df)
+}
+```
+
+## Cascades
+```{r}
+baker_bands <- read.csv(here('data', 'point_bands', 'full', 'baker_bands.csv'))
+baker_presence <- read.csv(here('data', 'point_bands', 'full', 'baker_presence.csv'))
+baker_points <- bands_presence_clean(baker_bands, baker_presence)
+
+eastGP_bands <- read.csv(here('data', 'point_bands', 'full', 'eastGP_bands.csv'))
+eastGP_presence <- read.csv(here('data', 'point_bands', 'full', 'eastGP_presence.csv'))
+eastGP_points <- bands_presence_clean(eastGP_bands, eastGP_presence)
+
+forbidden_bands <- read.csv(here('data', 'point_bands', 'full', 'forbidden_bands.csv'))
+forbidden_presence <- read.csv(here('data', 'point_bands', 'full', 'forbidden_presence.csv'))
+forbidden_points <- bands_presence_clean(forbidden_bands, forbidden_presence)
+
+mt_rainier_bands <- read.csv(here('data', 'point_bands', 'full', 'mt_rainier_bands.csv'))
+mt_rainier_presence <- read.csv(here('data', 'point_bands', 'full', 'mt_rainier_presence.csv')) %>% 
+  select(-layer, -path)
+mt_rainier_points <- bands_presence_clean(mt_rainier_bands, mt_rainier_presence)
+
+ncasc_bands <- read.csv(here('data', 'point_bands', 'full', 'ncasc_bands.csv'))
+ncasc_presence <- read.csv(here('data', 'point_bands', 'full', 'ncasc_presence.csv')) %>% 
+  select(-layer, -path)
+ncasc_points <- bands_presence_clean(ncasc_bands, ncasc_presence)
+
+snoqualmie_bands <- read.csv(here('data', 'point_bands', 'full', 'snoqualmie_bands.csv'))
+snoqualmie_presence <- read.csv(here('data', 'point_bands', 'full', 'snoqualmie_presence.csv'))
+snoqualmie_points <- bands_presence_clean(snoqualmie_bands, snoqualmie_presence)
+
+westGP_bands <- read.csv(here('data', 'point_bands', 'full', 'westGP_bands.csv'))
+westGP_presence <- read.csv(here('data', 'point_bands', 'full', 'westGP_presence.csv')) %>% 
+  select(-layer, -path)
+westGP_points <- bands_presence_clean(westGP_bands, westGP_presence)
+
+winthrop_bands <- read.csv(here('data', 'point_bands', 'full', 'winthrop_bands.csv'))
+winthrop_presence <- read.csv(here('data', 'point_bands', 'full', 'winthrop_presence.csv'))
+winthrop_points <- bands_presence_clean(winthrop_bands, winthrop_presence)
+
+cascades_full_points <- rbind(baker_points, eastGP_points, forbidden_points, mt_rainier_points, ncasc_points, snoqualmie_points, westGP_points, winthrop_points) %>% 
+  drop_na(presence)
+write.csv(cascades_full_points, here('data', 'point_bands', 'cascades_points_bands.csv'))
+```
+
+## Columbia
+```{r}
+colville_bands <- read.csv(here('data', 'point_bands', 'full', 'colville_bands.csv'))
+colville_presence <- read.csv(here('data', 'point_bands', 'full', 'colville_presence.csv'))
+colville_points <- bands_presence_clean(colville_bands, colville_presence)
+
+chelan_bands <- read.csv(here('data', 'point_bands', 'full', 'chelan_bands.csv'))
+chelan_presence <- read.csv(here('data', 'point_bands', 'full', 'chelan_presence.csv'))
+chelan_points <- bands_presence_clean(chelan_bands, chelan_presence)
+
+quincy_bands <- read.csv(here('data', 'point_bands', 'full', 'quincy_bands.csv'))
+quincy_presence <- read.csv(here('data', 'point_bands', 'full', 'quincy_presence.csv'))
+quincy_points <- bands_presence_clean(quincy_bands, quincy_presence)
+
+tricities_bands <- read.csv(here('data', 'point_bands', 'full', 'tricities_bands.csv'))
+tricities_presence <- read.csv(here('data', 'point_bands', 'full', 'tricities_presence.csv')) %>% 
+  select(-layer, -path)
+tricities_points <- bands_presence_clean(tricities_bands, tricities_presence)
+
+CRGNSA_bands <- read.csv(here('data', 'point_bands', 'full', 'CRGNSA_bands.csv'))
+CRGNSA_presence <- read.csv(here('data', 'point_bands', 'full', 'CRGNSA_presence.csv'))
+CRGNSA_points <- bands_presence_clean(CRGNSA_bands, CRGNSA_presence)
+
+columbia_full_points <- rbind(colville_points, chelan_points, quincy_points, tricities_points, CRGNSA_points) %>% 
+  drop_na(presence)
+write.csv(columbia_full_points, here('data', 'point_bands', 'columbia_points_bands.csv'))
+```
+
+# Supplemental Figure
+Violin plots for all 40 predictors; note for main figure showing violin plot of only 7 predictors included in the optimized model, see breakpoint_optimization.Rmd
+
+## ANOVAs
+```{r}
+all_points <- rbind(cascades_full_points, columbia_full_points)
+
+for(i in 1:40){
+mod <- lm(as.formula(paste0(colnames(all_points)[i], '~ presence')), data = all_points)
+print(anova(mod))
+}
+```
+
+## Violin Plot (All Bands, All Points)
+```{r}
+rbind(cascades_full_points, columbia_full_points) %>% 
+  pivot_longer(cols = !c(presence, x, y, coords), names_to = 'predictor') %>% 
+  mutate(Predictor = case_when(predictor == 'B1' ~ 'Aerosols (S2)',
+                               predictor == 'B2' ~ 'Blue (S2)',
+                               predictor == 'B3' ~ 'Green (S2)',
+                               predictor == 'B4' ~ 'Red (S2)',
+                               predictor == 'B5' ~ 'Red Edge 1 (S2)',
+                               predictor == 'B6' ~ 'Red Edge 2 (S2)',
+                               predictor == 'B7' ~ 'Red Edge 3 (S2)',
+                               predictor == 'B8' ~ 'NIR (S2)',
+                               predictor == 'B9' ~ 'Water Vapor (S2)',
+                               predictor == 'B10' ~ 'Cirrus (S2)',
+                               predictor == 'B11' ~ 'SWIR 1 (S2)',
+                               predictor == 'B12' ~ 'SWIR 2 (S2)',
+                               predictor == 'constant' ~ 'CHILI',
+                               predictor == 'cti' ~ 'CTI',
+                               predictor == 'evi' ~ 'EVI',
+                               predictor == 'elevation' ~ 'Elevation',
+                               predictor == 'nbi' ~ 'NBI',
+                               predictor == 'nbr' ~ 'NBR',
+                               predictor == 'nd_max' ~ 'Max. NDVI Texture (NAIP)',
+                               predictor == 'nd_median' ~ 'Median NDVI Texture (NAIP)',
+                               predictor == 'ndvi' ~ 'NDVI (S2)',
+                               predictor == 'ndwi' ~ 'NDWI',
+                               predictor == 'roughness' ~ 'Roughness',
+                               predictor == 'slope' ~ 'Slope',
+                               predictor == 'tpi' ~ 'TPI',
+                               predictor == 'tri' ~ 'TRI',
+                               predictor == 'VH' ~ 'VH (SAR)',
+                               predictor == 'VV' ~ 'VV (SAR)',
+                               predictor == 'msavi2' ~ 'MSAVI 2',
+                               predictor == 'B' ~ 'Blue (NAIP)',
+                               predictor == 'G' ~ 'Green (NAIP)',
+                               predictor == 'N' ~ 'NIR (NAIP)',
+                               predictor == 'R' ~ 'Red (NAIP)',
+                               predictor == 'awei_nsh' ~ 'AWEI (nsh)',
+                               predictor == 'awei_sh' ~ 'AWEI (sh)',
+                               predictor == 'naip_NDVI' ~ 'NDVI (NAIP)',
+                               predictor == 'ndvi_diff' ~ 'NDVI Diff.',
+                               predictor == 'nbr_max_var' ~ 'NBR Max. Var.',
+                               predictor == 'nbr_var_pct' ~ 
+                               'NBR Var. 25th Pct',
+                               predictor == 'nbr_var_median' ~ 
+                               'NBR Var. Medians')) %>% 
+  mutate(rhab = ifelse(presence == 1, 'Rocky', 'Non \n-Rocky')) %>% 
+  ggplot(aes(x = rhab, y = value, fill = rhab)) +
+    geom_violin(alpha = 0.6, linewidth = 1) +
+    facet_wrap(~Predictor, scales = 'free_y', strip.position = 'left') +
+    scale_fill_manual(values = c('darkgreen', 'gray10')) +
+    theme_bw() +
+    theme(axis.title = element_blank(),
+          plot.title = element_text(size = 18, face = 'bold', hjust = 0.5),
+          strip.text = element_text(size = 16, face = 'bold'),
+          strip.background = element_blank(),
+          strip.placement = 'outside',
+          panel.grid.minor = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.text.x = element_text(size = 16, face = 'bold'),
+          axis.text.y = element_text(size = 14),
+          legend.position = 'none')
+ggsave(here('figures', 'from-R', 'supplement', 'Figure S1.png'), height = 18, width = 24)
+```

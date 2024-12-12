@@ -1,0 +1,472 @@
+---
+title: "Variable Importance"
+author: "Joe Celebrezze"
+date: "2024-04-12"
+output: html_document
+---
+
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(here)
+library(GGally)
+library(raster)
+library(caret)
+library(ggpubr)
+here = here::here
+select = dplyr::select
+extract = raster::extract
+```
+
+# Data Wrangling
+## Cascades Region
+### Full Models
+```{r}
+# reading in data
+ncasc_varimp <- read.csv(here('data', 'varimp', 'full', 'ncasc_varimp.csv')) %>% 
+  mutate(region = 'ncasc',
+         varimp_scaled = scale(X0))
+winthrop_varimp <- read.csv(here('data', 'varimp', 'full', 'winthrop_varimp.csv')) %>% 
+  mutate(region = 'winthrop',
+         varimp_scaled = scale(X0))
+forbidden_varimp <- read.csv(here('data', 'varimp', 'full', 'forbidden_varimp.csv')) %>% 
+  mutate(region = 'forbidden',
+         varimp_scaled = scale(X0))
+baker_varimp <- read.csv(here('data', 'varimp', 'full', 'baker_varimp.csv')) %>% 
+  mutate(region = 'baker',
+         varimp_scaled = scale(X0))
+snoqualmie_varimp <- read.csv(here('data', 'varimp', 'full', 'snoqualmie_varimp.csv')) %>% 
+  mutate(region = 'snoqualmie',
+         varimp_scaled = scale(X0))
+mt_rainier_varimp <- read.csv(here('data', 'varimp', 'full', 'mt_rainier_varimp.csv')) %>% 
+  mutate(region = 'mt_rainier',
+         varimp_scaled = scale(X0))
+eastGP_varimp <- read.csv(here('data', 'varimp', 'full', 'eastGP_varimp.csv')) %>% 
+  mutate(region = 'eastGP',
+         varimp_scaled = scale(X0))
+westGP_varimp <- read.csv(here('data', 'varimp', 'full', 'westGP_varimp.csv')) %>% 
+  mutate(region = 'westGP',
+         varimp_scaled = scale(X0))
+
+full_varimp_cascades <- rbind(ncasc_varimp, winthrop_varimp, forbidden_varimp, baker_varimp, snoqualmie_varimp, mt_rainier_varimp, eastGP_varimp, westGP_varimp) %>% 
+  rename(varimp = X0, predictor = Property)
+
+# Function
+varimp_cleaning <- function(data){
+df <- data %>%   
+  mutate(Predictor = case_when(predictor == 'B1' ~ 'S2 Band: Aerosols',
+                               predictor == 'B2' ~ 'S2 Band: Blue',
+                               predictor == 'B3' ~ 'S2 Band: Green',
+                               predictor == 'B4' ~ 'S2 Band: Red',
+                               predictor == 'B5' ~ 'S2 Band: Red Edge 1',
+                               predictor == 'B6' ~ 'S2 Band: Red Edge 2',
+                               predictor == 'B7' ~ 'S2 Band 7: Red Edge 3',
+                               predictor == 'B8' ~ 'S2 Band 8: NIR',
+                               predictor == 'B9' ~ 'S2 Band 9: Water Vapor',
+                               predictor == 'B10' ~ 'S2 Band 10: Cirrus',
+                               predictor == 'B11' ~ 'S2 Band 11: SWIR 1',
+                               predictor == 'B12' ~ 'S2 Band 12: SWIR 2',
+                               predictor == 'constant' ~ 'CHILI',
+                               predictor == 'cti' ~ 'Compound Topographic Index',
+                               predictor == 'evi' ~ 'Enhanced Vegetation Index',
+                               predictor == 'elevation' ~ 'Elevation',
+                               predictor == 'nbi' ~ 'Normalized Buildup Index',
+                               predictor == 'nbr' ~ 'Normalized Burn Ratio',
+                               predictor == 'nd_max' ~ 'Max. NDVI Texture (NAIP)',
+                               predictor == 'nd_median' ~ 'Median NDVI Texture (NAIP)',
+                               predictor == 'ndvi' ~
+                                 'Normalized Difference Vegetation Index (S2)',
+                               predictor == 'ndwi' ~ 'Normalized Difference Water Index',
+                               predictor == 'roughness' ~ 'Topographic Roughness',
+                               predictor == 'slope' ~ 'Slope',
+                               predictor == 'tpi' ~ 'Topographic Position Index',
+                               predictor == 'tri' ~ 'Terrain Ruggedness Index',
+                               predictor == 'VH' ~ 'Vertical-Horizontal SAR',
+                               predictor == 'VV' ~ 'Vertical-Vertical SAR',
+                               predictor == 'msavi2' ~ 
+                                 'Modified Soil Adjusted Vegetation Index 2',
+                               predictor == 'B' ~ 'NAIP Band: Blue',
+                               predictor == 'G' ~ 'NAIP Band: Green',
+                               predictor == 'N' ~ 'NAIP Band: NIR',
+                               predictor == 'R' ~ 'NAIP Band: Red',
+                               predictor == 'awei_nsh' ~ 
+                                 'Automated Water Extraction Index (nsh)',
+                               predictor == 'awei_sh' ~ 
+                               'Automated Water Extraction Index (sh)',
+                               predictor == 'naip_NDVI' ~ 
+                               'Normalized Difference Vegetation Index (NAIP)',
+                               predictor == 'ndvi_diff' ~ 'NDVI (S2) Seasonal Difference',
+                               predictor == 'nbr_max_var' ~ 
+                               'NBR Maximum Variance',
+                               predictor == 'nbr_var_pct' ~ 
+                               'NBR Variance of 25th Pct',
+                               predictor == 'nbr_var_median' ~ 
+                               'NBR Variance of Medians')) %>% 
+  mutate(pred_group = case_when(predictor %in% c('VV', 'VH') ~ 'Radar',
+                                predictor %in% c('nd_max', 'nd_median', 'B', 'G', 'N',
+                                                 'R', 'naip_NDVI') ~ 'NAIP',
+                                predictor %in% c('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7',
+                                                 'B8', 'B9', 'B10', 'B11', 'B12', 'evi',
+                                                 'nbi', 'nbr', 'ndvi', 'ndwi', 'msavi2',
+                                                 'awei_sh', 'awei_nsh') ~
+                                                        'Sentinel 2',
+                                predictor %in% c('slope', 'roughness', 'tpi', 'tri',
+                                                 'elevation', 'cti', 'constant') ~ 
+                                                         'Topography',
+                                predictor %in% c('ndvi_diff', 'nbr_max_var',
+                                                 'nbr_var_pct', 'nbr_var_median') ~ 
+                                                      'Multi-temporal (S2)'))
+return(df)
+}
+
+full_varimp_cascades <- varimp_cleaning(full_varimp_cascades) %>% 
+  mutate(domain = 'Sub-Regional')
+
+# variable importance for model with all regions together
+full_varimp_all_cascades <- read.csv(here('data', 'varimp', 'full', 'full_cascades_varimp.csv')) %>% 
+  mutate(varimp_scaled = scale(varimp)) %>% 
+  rename(predictor = property) %>% 
+  mutate(region = 'all_cascades') %>% 
+  mutate(domain = 'Regional')
+full_varimp_all_cascades <- varimp_cleaning(full_varimp_all_cascades)
+```
+
+## Optimized Models
+From breakpoint analysis
+```{r}
+# reading in data
+ncasc_varimp <- read.csv(here('data', 'varimp', 'optimized', 'ncasc_varimp.csv')) %>% 
+  mutate(region = 'ncasc',
+         varimp_scaled = scale(X0))
+winthrop_varimp <- read.csv(here('data', 'varimp', 'optimized', 'winthrop_varimp.csv')) %>% 
+  mutate(region = 'winthrop',
+         varimp_scaled = scale(X0))
+forbidden_varimp <- read.csv(here('data', 'varimp', 'optimized', 'forbidden_varimp.csv')) %>% 
+  mutate(region = 'forbidden',
+         varimp_scaled = scale(X0))
+baker_varimp <- read.csv(here('data', 'varimp', 'optimized', 'baker_varimp.csv')) %>% 
+  mutate(region = 'baker',
+         varimp_scaled = scale(as.numeric(X0)))
+snoqualmie_varimp <- read.csv(here('data', 'varimp', 'optimized', 'snoqualmie_varimp.csv')) %>% 
+  mutate(region = 'snoqualmie',
+         varimp_scaled = scale(X0))
+mt_rainier_varimp <- read.csv(here('data', 'varimp', 'optimized', 'mt_rainier_varimp.csv')) %>% 
+  mutate(region = 'mt_rainier',
+         varimp_scaled = scale(X0))
+eastGP_varimp <- read.csv(here('data', 'varimp', 'optimized', 'eastGP_varimp.csv')) %>% 
+  mutate(region = 'eastGP',
+         varimp_scaled = scale(X0))
+westGP_varimp <- read.csv(here('data', 'varimp', 'optimized', 'westGP_varimp.csv')) %>% 
+  mutate(region = 'westGP',
+         varimp_scaled = scale(X0))
+
+optimized2_varimp_cascades <- rbind(ncasc_varimp, winthrop_varimp, forbidden_varimp, baker_varimp, snoqualmie_varimp, mt_rainier_varimp, eastGP_varimp, westGP_varimp) %>% 
+  rename(varimp = X0, predictor = Property)
+
+optimized2_varimp_cascades <- varimp_cleaning(optimized2_varimp_cascades) %>% 
+  mutate(domain = 'Sub-Regional')
+
+# variable importance for model with all regions together
+optimized2_varimp_all_cascades <- read.csv(here('data', 'varimp', 'optimized', 'full_cascades_varimp.csv')) %>% 
+  mutate(varimp_scaled = scale(varimp)) %>% 
+  rename(predictor = property) %>% 
+  mutate(region = 'all_cascades') %>% 
+  mutate(domain = 'Regional')
+optimized2_varimp_all_cascades <- varimp_cleaning(optimized2_varimp_all_cascades)
+```
+
+## Columbia
+### Full Models
+```{r}
+# reading in data
+colville_varimp <- read.csv(here('data', 'varimp', 'full', 'colville_varimp.csv')) %>% 
+  mutate(region = 'colville',
+         varimp_scaled = scale(X0))
+chelan_varimp <- read.csv(here('data', 'varimp', 'full', 'chelan_varimp.csv')) %>% 
+  mutate(region = 'chelan',
+         varimp_scaled = scale(X0))
+quincy_varimp <- read.csv(here('data', 'varimp', 'full', 'quincy_varimp.csv')) %>% 
+  mutate(region = 'quincy',
+         varimp_scaled = scale(X0))
+tricities_varimp <- read.csv(here('data', 'varimp', 'full', 'tricities_varimp.csv')) %>% 
+  mutate(region = 'tricities',
+         varimp_scaled = scale(X0))
+CRGNSA_varimp <- read.csv(here('data', 'varimp', 'full', 'CRGNSA_varimp.csv')) %>% 
+  mutate(region = 'CRGNSA',
+         varimp_scaled = scale(X0))
+
+full_varimp_columbia <- rbind(colville_varimp, chelan_varimp, quincy_varimp, tricities_varimp, CRGNSA_varimp) %>% 
+  rename(varimp = X0, predictor = Property)
+
+full_varimp_columbia <- varimp_cleaning(full_varimp_columbia) %>% 
+  mutate(domain = 'Sub-Regional')
+
+# variable importance for model with all regions together
+full_varimp_all_columbia <- read.csv(here('data', 'varimp', 'full', 'full_columbia_varimp.csv')) %>% 
+  mutate(varimp_scaled = scale(varimp)) %>% 
+  rename(predictor = property) %>% 
+  mutate(region = 'all_columbia') %>% 
+  mutate(domain = 'Regional')
+full_varimp_all_columbia <- varimp_cleaning(full_varimp_all_columbia)
+```
+
+## Optimized Models
+From breakpoint analysis
+```{r}
+# reading in data
+colville_varimp <- read.csv(here('data', 'varimp', 'optimized', 'colville_varimp.csv')) %>% 
+  mutate(region = 'colville',
+         varimp_scaled = scale(X0))
+chelan_varimp <- read.csv(here('data', 'varimp', 'optimized', 'chelan_varimp.csv')) %>% 
+  mutate(region = 'chelan',
+         varimp_scaled = scale(as.numeric(X0)))
+quincy_varimp <- read.csv(here('data', 'varimp', 'optimized', 'quincy_varimp.csv')) %>% 
+  mutate(region = 'quincy',
+         varimp_scaled = scale(X0))
+tricities_varimp <- read.csv(here('data', 'varimp', 'optimized', 'tricities_varimp.csv')) %>% 
+  mutate(region = 'tricities',
+         varimp_scaled = scale(X0))
+CRGNSA_varimp <- read.csv(here('data', 'varimp', 'optimized', 'CRGNSA_varimp.csv')) %>% 
+  mutate(region = 'CRGNSA',
+         varimp_scaled = scale(as.numeric(X0)))
+
+optimized2_varimp_columbia <- rbind(colville_varimp, chelan_varimp, quincy_varimp, tricities_varimp, CRGNSA_varimp) %>% 
+  rename(varimp = X0, predictor = Property)
+
+optimized2_varimp_columbia <- varimp_cleaning(optimized2_varimp_columbia) %>% 
+  mutate(domain = 'Sub-Regional')
+
+# variable importance for model with all regions together
+optimized2_varimp_all_columbia <- read.csv(here('data', 'varimp', 'optimized', 'full_columbia_varimp.csv')) %>% 
+  mutate(varimp_scaled = scale(varimp)) %>% 
+  rename(predictor = property) %>% 
+  mutate(region = 'all_columbia') %>% 
+  mutate(domain = 'Regional')
+optimized2_varimp_all_columbia <- varimp_cleaning(optimized2_varimp_all_columbia)
+```
+
+# Visualizations
+## Boxplots
+### Full Models
+#### Cascades
+```{r}
+cascades_varimp_plot <- rbind(full_varimp_cascades, full_varimp_all_cascades) %>% 
+  mutate(Predictor = fct_reorder(Predictor, desc(-varimp_scaled))) %>% 
+  ggplot(aes(y = Predictor, x = varimp_scaled)) +
+    geom_boxplot(aes(fill = pred_group), alpha = 0.75, size = 0.8, outlier.shape = NA) +
+    geom_point(aes(x = varimp_scaled, y = Predictor, color = domain, size = domain), alpha = 0.8) +
+    geom_text(aes(x = -1.3, y = 38, label = 'A'), size = 24, fontface = 'bold') + # for arranged
+    geom_text(aes(x = 3.75, y = 20, label = 'Cascades'),
+              size = 16, fontface = 'bold', angle = 90) + # for arranged
+    labs(x = 'Variable Importance (Scaled)', fill = 'Predictor Group',
+         color = 'Domain', size = 'Domain') +
+    scale_fill_manual(values = c('#000F08', '#F08CAE', '#662E9B', '#F86624', '#087E8B')) +
+    scale_size_manual(values = c(4, 1.7)) +
+    scale_color_manual(values = c('black', 'gray30')) +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.x = element_text(size = 20),
+          axis.title.x = element_text(size = 24, face = 'bold'),
+          axis.title.y = element_blank(),
+          legend.title = element_text(size = 22, face = 'bold'),
+          legend.text = element_text(size = 20, face = 'bold'),
+          axis.text.y = element_text(size = 20, hjust = 1),
+          #legend.position = 'top') # for arranged
+          legend.position = c(0.835, 0.15)) # for standalone
+
+cascades_varimp_plot
+ggsave(here('figures', 'from-R', 'main', 'Figure 5a.png'), height = 12.5, width = 15.5)
+```
+
+#### Columbia
+```{r}
+columbia_varimp_plot <- rbind(full_varimp_columbia, full_varimp_all_columbia) %>% 
+  mutate(Predictor = fct_reorder(Predictor, desc(-varimp_scaled))) %>% 
+  ggplot(aes(y = Predictor, x = varimp_scaled)) +
+    geom_boxplot(aes(fill = pred_group), alpha = 0.75, size = 0.8, outlier.shape = NA) +
+    geom_point(aes(x = varimp_scaled, y = Predictor, color = domain, size = domain), alpha = 0.8) +
+    geom_text(aes(x = -3, y = 38, label = 'B'), size = 24, fontface = 'bold') + # for arranged
+    geom_text(aes(x = 3.3, y = 20, label = 'Columbia'),
+              size = 16, fontface = 'bold', angle = 90) + # for arranged
+    labs(x = 'Variable Importance (Scaled)', fill = 'Predictor Group',
+         color = 'Domain', size = 'Domain') +
+    scale_fill_manual(values = c('#000F08', '#F08CAE', '#662E9B', '#F86624', '#087E8B')) +
+    scale_size_manual(values = c(4, 1.7)) +
+    scale_color_manual(values = c('black', 'gray30')) +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.x = element_text(size = 20),
+          axis.title.x = element_text(size = 24, face = 'bold'),
+          axis.title.y = element_blank(),
+          legend.title = element_text(size = 22, face = 'bold'),
+          legend.text = element_text(size = 20, face = 'bold'),
+          axis.text.y = element_text(size = 20, hjust = 1),
+          #legend.position = 'top') # for arranged
+          legend.position = c(0.835, 0.15)) # for standalone
+
+columbia_varimp_plot
+
+ggsave(here('figures', 'from-R', 'main', 'Figure 5b.png'), height = 12.5, width = 15.5)
+```
+
+### Optimized Models
+#### Cascades
+```{r}
+cascades_opt_varimp_plot <- rbind(optimized2_varimp_cascades, optimized2_varimp_all_cascades) %>%
+  mutate(Predictor = ifelse(predictor == 'msavi2', 'MSAVI2', Predictor)) %>% 
+  mutate(Predictor = fct_reorder(Predictor, desc(-varimp_scaled))) %>% 
+  ggplot(aes(y = Predictor, x = varimp_scaled)) +
+    geom_boxplot(aes(fill = pred_group), alpha = 0.75, size = 0.8, outlier.shape = NA) +
+    geom_point(aes(x = varimp_scaled, y = Predictor, color = domain, size = domain), alpha = 0.8) +
+    geom_text(aes(x = -1.85, y = 6.7, label = 'A'), size = 18, fontface = 'bold') + # for arranged
+    geom_text(aes(x = 2.02, y = 3.5, label = 'Cascades'),
+              size = 10, fontface = 'bold', angle = 90) + # for arranged
+    labs(x = 'Variable Importance (Scaled)', fill = 'Predictor Group',
+         color = 'Domain', size = 'Domain') +
+    scale_fill_manual(values = c('#000F08', '#F86624', '#087E8B')) +
+    scale_size_manual(values = c(4, 1.7)) +
+    scale_color_manual(values = c('black', 'gray30')) +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.x = element_text(size = 18),
+          axis.title.x = element_text(size = 20, face = 'bold'),
+          axis.title.y = element_blank(),
+          legend.title = element_text(size = 24, face = 'bold'),
+          legend.text = element_text(size = 22, face = 'bold'),
+          axis.text.y = element_text(size = 19, hjust = 1),
+          legend.position = 'top') # for arranged
+          #legend.position = c(0.75, 0.86)) # for standalone
+
+cascades_opt_varimp_plot
+```
+
+#### Columbia
+```{r}
+columbia_opt_varimp_plot <- rbind(optimized2_varimp_columbia, optimized2_varimp_all_columbia) %>% 
+  mutate(Predictor = fct_reorder(Predictor, desc(-varimp_scaled))) %>% 
+  ggplot(aes(y = Predictor, x = varimp_scaled)) +
+    geom_boxplot(aes(fill = pred_group), alpha = 0.75, size = 0.8, outlier.shape = NA) +
+    geom_point(aes(x = varimp_scaled, y = Predictor, color = domain, size = domain), alpha = 0.8) +
+    geom_text(aes(x = -1.32, y = 6.7, label = 'B'), size = 18, fontface = 'bold') + # for arranged
+    geom_text(aes(x = 2.05, y = 3.5, label = 'Columbia'),
+              size = 10, fontface = 'bold', angle = 90) + # for arranged
+    labs(x = 'Variable Importance (Scaled)', fill = 'Predictor Group',
+         color = 'Domain', size = 'Domain') +
+    scale_fill_manual(values = c('#000F08', '#F86624', '#087E8B')) +
+    scale_size_manual(values = c(4, 1.7)) +
+    scale_color_manual(values = c('black', 'gray30')) +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.x = element_text(size = 18),
+          axis.title.x = element_text(size = 20, face = 'bold'),
+          axis.title.y = element_blank(),
+          legend.title = element_text(size = 24, face = 'bold'),
+          legend.text = element_text(size = 22, face = 'bold'),
+          axis.text.y = element_text(size = 19, hjust = 1),
+          legend.position = 'top') # for arranged
+          #legend.position = c(0.75, 0.86)) # for standalone
+
+columbia_opt_varimp_plot
+```
+
+### Arranged
+```{r}
+ggarrange(cascades_varimp_plot, columbia_varimp_plot, common.legend = T, ncol = 1)
+
+ggsave(here('figures', 'from-R', 'extra', 'variable_importance_Figure5.png'), height = 24, width = 17)
+
+ggarrange(cascades_opt_varimp_plot, columbia_opt_varimp_plot,
+          common.legend = T, legend = 'right', ncol = 1)
+
+ggsave(here('figures', 'from-R', 'supplement', 'Figure S2.png'),
+       height = 9, width = 16)
+```
+
+## Comparing Regions
+Data Wrangling
+```{r}
+casc_varimpC <- full_varimp_cascades %>% 
+  mutate(super_region = 'cascades') %>% 
+  group_by(predictor) %>% 
+  summarise(varimp_avg = mean(varimp_scaled), super_region = super_region,
+            pred_group = pred_group) %>% 
+  distinct()
+
+columbia_varimpC <- full_varimp_columbia %>% 
+  mutate(super_region = 'columbia') %>% 
+  group_by(predictor) %>% 
+  summarise(varimp_avg = mean(varimp_scaled), super_region = super_region,
+            pred_group = pred_group) %>% 
+  distinct()
+
+varimp_compare <- rbind(casc_varimpC, columbia_varimpC) %>% 
+  pivot_wider(names_from = super_region, values_from = varimp_avg) %>% 
+    mutate(Predictor = case_when(predictor == 'B1' ~ 'Aerosols (S2)',
+                               predictor == 'B2' ~ NA,
+                               predictor == 'B3' ~ NA,
+                               predictor == 'B4' ~ 'Red (S2)',
+                               predictor == 'B5' ~ NA,
+                               predictor == 'B6' ~ NA,
+                               predictor == 'B7' ~ NA,
+                               predictor == 'B8' ~ 'NIR (S2)',
+                               predictor == 'B9' ~ NA,
+                               predictor == 'B10' ~ NA,
+                               predictor == 'B11' ~ NA,
+                               predictor == 'B12' ~ NA,
+                               predictor == 'constant' ~ NA,
+                               predictor == 'cti' ~ NA,
+                               predictor == 'evi' ~ NA,
+                               predictor == 'elevation' ~ 'Elevation',
+                               predictor == 'nbi' ~ 'NBI',
+                               predictor == 'nbr' ~ 'NBR',
+                               predictor == 'nd_max' ~ 'Max. NDVI Texture',
+                               predictor == 'nd_median' ~ NA,
+                               predictor == 'ndvi' ~ 'NDVI (S2)',
+                               predictor == 'ndwi' ~ NA,
+                               predictor == 'roughness' ~ 'Roughness',
+                               predictor == 'slope' ~ 'Slope',
+                               predictor == 'tpi' ~ NA,
+                               predictor == 'tri' ~ 'TRI',
+                               predictor == 'VH' ~ 'VH (SAR)',
+                               predictor == 'VV' ~ 'VV (SAR)',
+                               predictor == 'msavi2' ~ 'MSAVI2',
+                               predictor == 'B' ~ NA,
+                               predictor == 'G' ~ NA,
+                               predictor == 'N' ~ 'NIR (NAIP)',
+                               predictor == 'R' ~ NA,
+                               predictor == 'awei_nsh' ~ NA,
+                               predictor == 'awei_sh' ~ NA,
+                               predictor == 'naip_NDVI' ~ 'NDVI (NAIP)',
+                               predictor == 'ndvi_diff' ~ 'NDVI Diff.',
+                               predictor == 'nbr_max_var' ~ 'NBR Max. Var.',
+                               predictor == 'nbr_var_pct' ~ 'NBR Var. of 25th Pct',
+                               predictor == 'nbr_var_median' ~ 'NBR Var. of Medians'))
+```
+
+Visualization
+```{r}
+varimp_compare %>% 
+  ggplot(aes(x = cascades, y = columbia, color = pred_group)) +
+    geom_point() +
+    geom_text(aes(label = Predictor, x = cascades, y = columbia + 0.05), size = 2, fontface = 'bold') +
+    geom_abline(slope = 1, intercept = 0) +
+    labs(x = 'Cascades Variable Importance', y = 'Columbia Variable Importance', color = 'Predictor Group') +
+    scale_color_manual(values = c('#000F08', '#F08CAE', '#662E9B', '#F86624', '#087E8B')) +
+    scale_x_continuous(limits = c(-3, 3)) +
+    scale_y_continuous(limits = c(-3, 3)) +
+    theme_bw() +
+    theme(axis.text = element_text(size = 14),
+          legend.text = element_text(size = 14),
+          axis.title = element_text(size = 17, face = 'bold'),
+          legend.title = element_text(size = 17, face = 'bold'),
+          legend.position = c(0.2, 0.8))
+
+ggsave(here('figures', 'from-R', 'extra', 'comparing_regions_varimp.png'), height = 8, width = 8)
+```
+

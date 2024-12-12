@@ -1,0 +1,370 @@
+---
+title: 'Optimizing RF Model: Breakpoint Analysis'
+author: "Joe Celebrezze"
+date: "2024-04-30"
+output: html_document
+---
+
+# Setup
+```{r}
+library(tidyverse)
+library(here)
+library(segmented)
+library(ggpubr)
+here = here::here
+select = dplyr::select
+
+cascade_bp_df <- read.csv(here('data', 'varimp', 'cascades_varimp_breakpoint.csv'))
+columbia_bp_df <- read.csv(here('data', 'varimp', 'columbia_varimp_breakpoint.csv'))
+```
+
+#---Cascades---
+# EDA
+```{r}
+cascade_bp_df %>% 
+  pivot_longer(cols = c(overall_acc, producers_acc_nr, producers_acc_r, users_acc_nr, users_acc_r), names_to = 'accuracy_stat', values_to = 'accuracy_val') %>% 
+  ggplot(aes(x = no_predictors, y = accuracy_val, color = accuracy_stat)) +
+    geom_point() +
+    geom_smooth(se = F) +
+    theme_bw()
+```
+
+# Segmented Regressions
+## Overall Accuracy
+```{r}
+oa.lm <- lm(overall_acc ~ no_predictors, cascade_bp_df)
+
+oa.seg <- segmented(oa.lm, seg.Z = ~no_predictors, psi = 10, npsi = 1)
+summary(oa.seg)
+
+# for fitted values
+no_predictors <- cascade_bp_df$no_predictors
+overall_acc <- cascade_bp_df$overall_acc
+users_acc_nr <- cascade_bp_df$users_acc_nr
+users_acc_r <- cascade_bp_df$users_acc_r
+producers_acc_nr <- cascade_bp_df$producers_acc_nr
+producers_acc_r <- cascade_bp_df$producers_acc_r
+
+oa.fit <- numeric(length(no_predictors)) * NA
+oa.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(oa.seg)$fit
+cascade_bp_df$oa.fit <- oa.fit
+```
+
+## User's Accuracy
+Not Rocky
+```{r}
+uanr.lm <- lm(users_acc_nr ~ no_predictors, cascade_bp_df)
+
+uanr.seg <- segmented(uanr.lm, seg.Z = ~no_predictors, psi = 10)
+summary(uanr.seg)
+
+# fitted values
+uanr.fit <- numeric(length(no_predictors)) * NA
+uanr.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(uanr.seg)$fit
+cascade_bp_df$uanr.fit <- uanr.fit
+```
+
+Rocky
+```{r}
+uar.lm <- lm(users_acc_r ~ no_predictors, cascade_bp_df)
+
+uar.seg <- segmented(uar.lm, seg.Z = ~no_predictors, psi = 10)
+summary(uar.seg)
+
+# fitted values
+uar.fit <- numeric(length(no_predictors)) * NA
+uar.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(uar.seg)$fit
+cascade_bp_df$uar.fit <- uar.fit
+```
+
+## Producer's Accuracy
+Not Rocky
+```{r}
+panr.lm <- lm(producers_acc_nr ~ no_predictors, cascade_bp_df)
+
+panr.seg <- segmented(panr.lm, seg.Z = ~no_predictors, psi = 10)
+summary(panr.seg)
+
+# fitted values
+panr.fit <- numeric(length(no_predictors)) * NA
+panr.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(panr.seg)$fit
+cascade_bp_df$panr.fit <- panr.fit
+```
+
+Rocky
+```{r}
+par.lm <- lm(producers_acc_r ~ no_predictors, cascade_bp_df)
+
+par.seg <- segmented(par.lm, seg.Z = ~no_predictors, psi = 10)
+summary(par.seg)
+
+# fitted values
+par.fit <- numeric(length(no_predictors)) * NA
+par.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(par.seg)$fit
+cascade_bp_df$par.fit <- par.fit
+```
+
+# Data Visualizations
+## Breakpoint
+```{r}
+cascades_mean_psi <- mean(c(6.314, 6.243, 6.368, 6.372, 6.242))
+
+cascade_bp_plot <- cascade_bp_df %>% 
+  pivot_longer(cols = c(overall_acc, producers_acc_nr, producers_acc_r, users_acc_nr, users_acc_r), names_to = 'accuracy_stat', values_to = 'accuracy_val') %>% 
+  mutate(accuracy_stat = case_when(accuracy_stat == 'overall_acc' ~ 'Overall Accuracy',
+                                   accuracy_stat == 'producers_acc_nr' ~ "Producer's Accuracy (Non-rocky)",
+                                   accuracy_stat == 'producers_acc_r' ~ "Producer's Accuracy (Rocky)",
+                                   accuracy_stat == 'users_acc_nr' ~ "User's Accuracy (Non-rocky)",
+                                   accuracy_stat == 'users_acc_r' ~ "User's Accuracy (Rocky)")) %>% 
+  ggplot() +
+    geom_point(aes(x = no_predictors, y = accuracy_val*100, color = accuracy_stat), size = 3) +
+    geom_line(aes(x = no_predictors, y = oa.fit*100), data = cascade_bp_df,
+              linewidth = 1.3, color = '#C2A83E') +
+    geom_line(aes(x = no_predictors, y = panr.fit*100), data = cascade_bp_df,
+              linewidth = 1.3, color = '#09BC8A') +
+    geom_line(aes(x = no_predictors, y = par.fit*100), data = cascade_bp_df,
+              linewidth = 1.3, color = '#4F5D2F') +
+    geom_line(aes(x = no_predictors, y = uanr.fit*100), data = cascade_bp_df,
+              linewidth = 1.3, color = '#87BCDE') +
+    geom_line(aes(x = no_predictors, y = uar.fit*100), data = cascade_bp_df,
+              linewidth = 1.3, color = '#22223B') +
+    geom_vline(xintercept = cascades_mean_psi, linetype = 'dashed', color = 'gray50') +
+    geom_text(aes(x = cascades_mean_psi - 0.5, y = 91, label = 'Mean Breakpoint'),
+              angle = 90, size = 5, face = 'bold') +
+    scale_color_manual(values = c('#C2A83E', '#09BC8A', '#4F5D2F', '#87BCDE', '#22223B')) +
+    scale_x_continuous(breaks = c(4, 6, 8, 12, 16, 20, 24, 28, 32, 36, 40)) +
+    labs(x = 'Number of Predictors', y = 'Accuracy (%)', color = 'Accuracy Statistic',
+         title = 'Cascades Region') + # title for arranged plot
+    theme_bw() +
+    theme(axis.title = element_text(face = 'bold', size = 20),
+          axis.text = element_text(size = 15),
+          legend.title = element_text(face = 'bold', size = 20),
+          legend.text = element_text(face = 'bold', size = 20),
+          plot.title = element_text(face = 'bold', size = 22, hjust = 0.5), # for arranged
+          legend.position = 'bottom') # for arranged
+          #legend.position = c(0.75, 0.2)) # for standalone
+cascade_bp_plot
+```
+
+## Violin Plot
+```{r}
+cascades_optimized_points <- read.csv(here('data', 'point_bands', 'cascades_points_bands.csv')) %>% 
+  select(slope, nbr, msavi2, elevation, nbr_var_pct, B2, B5, presence, coords)
+
+cascade_violin_plot <- cascades_optimized_points %>% 
+  pivot_longer(cols = !c(presence, coords), names_to = 'predictor') %>%
+  mutate(Predictor = case_when(predictor == 'elevation' ~ 'Elevation',
+                               predictor == 'nbr' ~ 'NBR',
+                               predictor == 'slope' ~ 'Slope',
+                               predictor == 'msavi2' ~ 'MSAVI2',
+                               predictor == 'nbr_var_pct' ~ 
+                               'NBR Variance \nof 25th Pct',
+                               predictor == 'B2' ~ 'Blue Band (S2)',
+                               predictor == 'B5' ~ 'Red Edge 1 Band (S2)'
+                                 )) %>% 
+  mutate(Predictor = factor(Predictor, levels = c('MSAVI2',
+                                                  'NBR Variance \nof 25th Pct',
+                                                  'Elevation', 'NBR', 'Red Edge 1 Band (S2)',
+                                                  'Blue Band (S2)', 'Slope'))) %>% 
+  mutate(rhab = ifelse(presence == 1, 'Rocky', 'Non- \nRocky')) %>% 
+  ggplot(aes(x = rhab, y = value, fill = rhab)) +
+    geom_violin(alpha = 0.6, linewidth = 1) +
+    facet_wrap(~Predictor, scales = 'free_y', strip.position = 'left', ncol = 1) +
+    scale_fill_manual(values = c('darkgreen', 'gray10')) +
+    theme_bw() +
+    labs(title = 'Cascades Region') +
+    theme(axis.title = element_blank(),
+          plot.title = element_text(size = 28, face = 'bold', hjust = 0.5),
+          strip.text = element_text(size = 22, face = 'bold'),
+          strip.background = element_blank(),
+          strip.placement = 'outside',
+          panel.grid.minor = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.text.x = element_text(size = 24, face = 'bold'),
+          axis.text.y = element_text(size = 22),
+          legend.position = 'none')
+cascade_violin_plot
+```
+
+#---Columbia---
+# EDA
+```{r}
+columbia_bp_df %>% 
+  pivot_longer(cols = c(overall_acc, producers_acc_nr, producers_acc_r, users_acc_nr, users_acc_r), names_to = 'accuracy_stat', values_to = 'accuracy_val') %>% 
+  ggplot(aes(x = no_predictors, y = accuracy_val, color = accuracy_stat)) +
+    geom_point() +
+    geom_smooth(se = F) +
+    theme_bw()
+```
+
+# Segmented Regressions
+## Overall Accuracy
+```{r}
+oa.lm <- lm(overall_acc ~ no_predictors, columbia_bp_df)
+
+oa.seg <- segmented(oa.lm, seg.Z = ~no_predictors, psi = 10, npsi = 1)
+summary(oa.seg)
+
+# for fitted values
+no_predictors <- columbia_bp_df$no_predictors
+overall_acc <- columbia_bp_df$overall_acc
+users_acc_nr <- columbia_bp_df$users_acc_nr
+users_acc_r <- columbia_bp_df$users_acc_r
+producers_acc_nr <- columbia_bp_df$producers_acc_nr
+producers_acc_r <- columbia_bp_df$producers_acc_r
+
+oa.fit <- numeric(length(no_predictors)) * NA
+oa.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(oa.seg)$fit
+columbia_bp_df$oa.fit <- oa.fit
+```
+
+## User's Accuracy
+Not Rocky
+```{r}
+uanr.lm <- lm(users_acc_nr ~ no_predictors, columbia_bp_df)
+
+uanr.seg <- segmented(uanr.lm, seg.Z = ~no_predictors, psi = 10)
+summary(uanr.seg)
+
+# fitted values
+uanr.fit <- numeric(length(no_predictors)) * NA
+uanr.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(uanr.seg)$fit
+columbia_bp_df$uanr.fit <- uanr.fit
+```
+
+Rocky
+```{r}
+uar.lm <- lm(users_acc_r ~ no_predictors, columbia_bp_df)
+
+uar.seg <- segmented(uar.lm, seg.Z = ~no_predictors, psi = 10)
+summary(uar.seg)
+
+# fitted values
+uar.fit <- numeric(length(no_predictors)) * NA
+uar.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(uar.seg)$fit
+columbia_bp_df$uar.fit <- uar.fit
+```
+
+## Producer's Accuracy
+Not Rocky
+```{r}
+panr.lm <- lm(producers_acc_nr ~ no_predictors, columbia_bp_df)
+
+panr.seg <- segmented(panr.lm, seg.Z = ~no_predictors, psi = 10)
+summary(panr.seg)
+
+# fitted values
+panr.fit <- numeric(length(no_predictors)) * NA
+panr.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(panr.seg)$fit
+columbia_bp_df$panr.fit <- panr.fit
+```
+
+Rocky
+```{r}
+par.lm <- lm(producers_acc_r ~ no_predictors, columbia_bp_df)
+
+par.seg <- segmented(par.lm, seg.Z = ~no_predictors, psi = 10)
+summary(par.seg)
+
+# fitted values
+par.fit <- numeric(length(no_predictors)) * NA
+par.fit[complete.cases(rowSums(cbind(no_predictors, overall_acc, users_acc_nr, users_acc_r, producers_acc_nr, producers_acc_r)))] <- segmented::broken.line(par.seg)$fit
+columbia_bp_df$par.fit <- par.fit
+```
+
+# Data Visualization
+## Breakpoint
+```{r}
+columbia_mean_psi <- mean(c(6.372, 6.437, 6.095, 6.309, 6.404))
+
+columbia_bp_plot <- columbia_bp_df %>% 
+  pivot_longer(cols = c(overall_acc, producers_acc_nr, producers_acc_r, users_acc_nr, users_acc_r), names_to = 'accuracy_stat', values_to = 'accuracy_val') %>% 
+  mutate(accuracy_stat = case_when(accuracy_stat == 'overall_acc' ~ 'Overall Accuracy',
+                                   accuracy_stat == 'producers_acc_nr' ~ "Producer's Accuracy (Non-rocky)",
+                                   accuracy_stat == 'producers_acc_r' ~ "Producer's Accuracy (Rocky)",
+                                   accuracy_stat == 'users_acc_nr' ~ "User's Accuracy (Non-rocky)",
+                                   accuracy_stat == 'users_acc_r' ~ "User's Accuracy (Rocky)")) %>% 
+  ggplot() +
+    geom_point(aes(x = no_predictors, y = accuracy_val*100, color = accuracy_stat), size = 3) +
+    geom_line(aes(x = no_predictors, y = oa.fit*100), data = columbia_bp_df,
+              linewidth = 1.3, color = '#C2A83E') +
+    geom_line(aes(x = no_predictors, y = panr.fit*100), data = columbia_bp_df,
+              linewidth = 1.3, color = '#09BC8A') +
+    geom_line(aes(x = no_predictors, y = par.fit*100), data = columbia_bp_df,
+              linewidth = 1.3, color = '#4F5D2F') +
+    geom_line(aes(x = no_predictors, y = uanr.fit*100), data = columbia_bp_df,
+              linewidth = 1.3, color = '#87BCDE') +
+    geom_line(aes(x = no_predictors, y = uar.fit*100), data = columbia_bp_df,
+              linewidth = 1.3, color = '#22223B') +
+    geom_vline(xintercept = columbia_mean_psi, linetype = 'dashed', color = 'gray50') +
+    geom_text(aes(x = columbia_mean_psi - 0.5, y = 52, label = 'Mean Breakpoint'),
+              angle = 90, size = 5, face = 'bold') +
+    scale_color_manual(values = c('#C2A83E', '#09BC8A', '#4F5D2F', '#87BCDE', '#22223B')) +
+    scale_x_continuous(breaks = c(2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 36, 40)) +
+    scale_y_continuous(breaks = c(50, 62, 74, 86, 98)) +
+    labs(x = 'Number of Predictors', y = 'Accuracy (%)', color = 'Accuracy Statistic',
+         title = 'Columbia Region') + # title for arranged plot
+    theme_bw() +
+    theme(axis.title = element_text(face = 'bold', size = 20),
+          axis.text = element_text(size = 15),
+          legend.title = element_text(face = 'bold', size = 20),
+          legend.text = element_text(face = 'bold', size = 20),
+          plot.title = element_text(face = 'bold', size = 22, hjust = 0.5), # for arranged
+          legend.position = 'bottom') # for arranged
+          #legend.position = c(0.75, 0.2)) # for standalone
+columbia_bp_plot
+```
+
+## Violin Plot
+```{r}
+columbia_optimized_points <- read.csv(here('data', 'point_bands', 'columbia_points_bands.csv')) %>% 
+  select(slope, nbr_var_pct, elevation, B8, nbi, B1, nbr, presence, coords)
+
+columbia_violin_plot <- columbia_optimized_points %>% 
+  pivot_longer(cols = !c(presence, coords), names_to = 'predictor') %>%
+  mutate(Predictor = case_when(predictor == 'elevation' ~ 'Elevation',
+                               predictor == 'nbi' ~ 'NBI',
+                               predictor == 'nbr' ~ 'NBR',
+                               predictor == 'slope' ~ 'Slope',
+                               predictor == 'nbr_var_pct' ~ 
+                               'NBR Variance \nof 25th Pct',
+                               predictor == 'B8' ~ 'NIR Band (S2)',
+                               predictor == 'B1' ~ 'Aerosols (S2)')) %>% 
+  mutate(Predictor = factor(Predictor, levels = c('NIR Band (S2)',
+                                                  'NBR Variance \nof 25th Pct',
+                                                  'Slope', 'Elevation', 'NBI', 'NBR',
+                                                  'Aerosols (S2)'))) %>% 
+  mutate(rhab = ifelse(presence == 1, 'Rocky', 'Non- \nRocky')) %>% 
+  ggplot(aes(x = rhab, y = value, fill = rhab)) +
+    geom_violin(alpha = 0.6, linewidth = 1) +
+    facet_wrap(~Predictor, scales = 'free_y', strip.position = 'left', ncol = 1) +
+    scale_fill_manual(values = c('darkgreen', 'gray10')) +
+    theme_bw() +
+    labs(title = 'Columbia Region') +
+    theme(axis.title = element_blank(),
+          plot.title = element_text(size = 28, face = 'bold', hjust = 0.5),
+          strip.text = element_text(size = 22, face = 'bold'),
+          strip.background = element_blank(),
+          strip.placement = 'outside',
+          panel.grid.minor = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.text.x = element_text(size = 24, face = 'bold'),
+          axis.text.y = element_text(size = 22),
+          legend.position = 'none')
+columbia_violin_plot
+```
+
+# ------------
+# Main Figures
+```{r}
+# Breakpoint figure
+bp_plots <- ggarrange(cascade_bp_plot, columbia_bp_plot, ncol = 2,
+                      common.legend = T, legend = 'right',
+                      labels = 'AUTO', font.label = list(size = 38, face = 'bold'))
+ggsave(here('figures', 'from-R', 'main', 'Figure 6.png'), height = 7, width = 22)
+
+# Violin plots figure
+violin_plots <- ggarrange(cascade_violin_plot, columbia_violin_plot, ncol = 2)
+ggsave(here('figures', 'from-R', 'main', 'Figure 7.png'), height = 24, width = 12) # 7 rows, 2 columns
+```
+
