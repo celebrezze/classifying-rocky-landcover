@@ -1,0 +1,894 @@
+// ROCKY HABITAT MAPPING WITH RANDOM FOREST MODELS
+// Contacts: Joe Celebrezze, University of California, Santa Barbara; formerly at Washington State University, celebrezze@ucsb.edu
+//           Doug Glavich, FS NW Oregon Ecology, doug.glavich@usda.gov
+// Updated: April 12, 2024
+
+
+// This script gathers necessary data, wrangles the data, and runs random forest models.
+// There are a fair amount of variables that require user input and lines of code can be
+// unhashed for different uses. The script below serves as an example of how we set up
+// our GEE script using a GEE project by ee-joebrezze. Necessary assets are stored in the
+// GIS data folder.
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ SETUP ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+var palettes = require('users/gena/packages:palettes');//adds map color palette
+
+////////////////////////// Area of interest //////////////////////////////
+var aoi = ee.FeatureCollection('projects/ee-joebrezze/assets/cascades_aoi');
+
+////////////////////////// Training points //////////////////////////////
+var points = ee.FeatureCollection('projects/ee-joebrezze/assets/cascades_points');
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DATA PREPARATION ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+///////////////////////// Create Sentinal 2 (S2) image collection/////////////////////////////////////
+var s2_col = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2023-07-01', '2023-09-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create S2 image
+var s2_img = s2_col.median().clip(aoi);
+print('sentinel-2', s2_img);
+
+/////////////////Normalized Difference Vegetation Index (NDVI) calculated from Sentinel 2 image collection/////////////////////////////////////////
+// Create NDVI image collection
+var s2_ndvi_col = s2_col.map(function(img) {
+  return img.normalizedDifference(['B8', 'B4']);//applies Normalized Difference formula
+  });
+// Create NDVI image
+var s2_ndvi_img = s2_ndvi_col.median().clip(aoi).rename('ndvi');
+// Add to map
+Map.addLayer(s2_ndvi_img, {min: -1, max: 1, palette: ['FF0000','FFBF00', 'FFFF00','00FF00']}, 'NDVI', false);
+
+/////////Normalized Differnece Wetness Index (NDWI) calculated from Sentinel 2 image collection////////////////////////////////////////////////
+// Create NDWI image collection
+var s2_ndwi_col = s2_col.map(function(img) {
+  return img.normalizedDifference(['B3', 'B12']);
+  });
+// Create NDWI image
+var s2_ndwi_img = s2_ndwi_col.median().clip(aoi).rename('ndwi');
+// Add to map
+Map.addLayer(s2_ndwi_img, {min: -1, max: 1, palette: ['0000FF', '00FFFF', 'FFFF00', 'FF0000', 'FFFFFF']}, 'NDWI', false);     
+
+///////////Normalized Difference Burn Index (NBR) calculated from Sentinel 2 image collection/////////////
+// Create NBR image collection
+var s2_nbr_col = s2_col.map(function(img) {
+  return img.normalizedDifference(['B8A', 'B12']);
+  });
+// Create s2 nbr image
+var s2_nbr_img = s2_nbr_col.median().clip(aoi).rename('nbr');
+// Add to map
+Map.addLayer(s2_nbr_img, {min: -1, max: 1, palette: ['FF0000', 'FFBF00', 'FFFF00', '00FF99', '0080FF']}, 'NBR', false); 
+
+///////////////////// Water Extraction Formulas (Using Sentinel 2)//////////////////////////////
+// Compute the AWEI_nsh using an expression.
+var awei_nsh = s2_img.expression(        // s2_img is Sentinel 2 data median, clipped to AOI
+    '4 * (GREEN-SWIR1) - (0.25 * NIR + 2.75 * SWIR2)',{ 
+      'GREEN': s2_img.select('B3'),
+      'SWIR1': s2_img.select('B11'),
+      'NIR': s2_img.select('B8'),
+      'SWIR2': s2_img.select('B12'),
+      
+});
+//Create AWEI_nsh layer and new band name
+ var s2_awei_nsh = awei_nsh.clip(aoi).rename('awei_nsh');
+ print('s2_awei_nsh:', s2_awei_nsh);
+
+// Compute the AWEI_sh using an expression.
+var awei_sh = s2_img.expression(        // s2_img is Sentinel 2 data median, clipped to AOI
+    'BLUE + 2.5 * GREEN - 1.5 * (NIR + SWIR1) - 0.25 * SWIR2', {
+      'BLUE': s2_img.select('B2'),
+      'GREEN': s2_img.select('B3'),
+      'SWIR1': s2_img.select('B11'),
+      'NIR': s2_img.select('B8'),
+      'SWIR2': s2_img.select('B12'),
+      
+});
+print('awei_sh:', awei_sh);
+//Create AWEI_sh layer and new band name
+var s2_awei_sh = awei_sh.clip(aoi).rename('awei_sh');
+print('s2_awei_sh:', s2_awei_sh);
+
+///////////////////Enhanced Vegetation Index (EVI)////////////////////////////////////
+// Compute EVI using an expression
+var evi_img = s2_img.expression(        // s2_img is Sentinel 2 data median, clipped to AOI
+      '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {
+      'NIR' : s2_img.select('B8'),
+      'RED' : s2_img.select('B4'),
+      'BLUE': s2_img.select('B2')});
+// EVI image, clipped to AOI
+var evi = evi_img.clip(aoi).rename('evi');
+print('evi:', evi);
+// Color palette
+var evi_palette = [
+    'FFFFFF', 'CE7E45', 'DF923D', 'F1B555', 'FCD163', '99B718',
+    '74A901', '66A000', '529400', '3E8601', '207401', '056201',
+    '004C00', '023B01', '012E01', '011D01', '011301'];
+// Add to map
+Map.addLayer(evi, {min:0.1, max:0.8, palette: evi_palette}, 'EVI', false);
+
+///////////////Add Modified Soil Adjusted Vegetation Index 2 (MSAVI2)//////////////////////////////////
+// compute MSAVI2 using expression
+var msavi2_img = s2_img.expression(        // s2_img is Sentinel 2 data median, clipped to AOI
+  '(2 * NIR + 1 - sqrt(pow((2 * NIR + 1), 2) - 8 * (NIR - RED)) ) / 2', 
+  {
+    'NIR': s2_img.select('B8'), 
+    'RED': s2_img.select('B4')});
+// Clip and rename   
+var msavi2 = msavi2_img.clip(aoi).rename('msavi2');
+print('msavi2:', msavi2);
+// Color palette
+ var msavi2_palette= ['FFFFFF', 'CE7E45', 'DF923D', 'F1B555', 'FCD163', '99B718', '74A901', '66A000', '529400',
+    '3E8601', '207401', '056201', '004C00', '023B01', '012E01', '011D01', '011301'];
+// Add to map
+ Map.addLayer(msavi2, {min:-0.03159281238913536, max:0.2486189603805542, palette: msavi2_palette}, 'MSAVI2', false);   
+
+///////////////////Add Normalized Buildup Index (NBI)/////////////////////////////////////////////
+// Compute the NBI using an expression.
+var nbi_img = s2_img.expression(
+    '((RED + BLUE) - GREEN)/((RED + BLUE) + GREEN)', {
+      'BLUE': s2_img.select('B2'),
+      'GREEN': s2_img.select('B3'),
+      'RED': s2_img.select('B4'),
+    });
+var nbi = nbi_img.clip(aoi).rename('nbi');
+print('nbi:', nbi);
+
+/////////////////Change in NDVI (Late-Early Season)/////////////////////////////////////////
+// EARLY SEASON
+var s2_early = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2023-05-01', '2023-06-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+
+// Create NDVI image collection
+var s2_ndvi_early_col = s2_early.map(function(img) {
+  return img.normalizedDifference(['B8', 'B4']);//applies Normalized Difference formula
+  });
+// Create Median NDVI image
+var s2_ndvi_early = s2_ndvi_early_col.median().clip(aoi).rename('ndvi');
+
+// LATE SEASON
+var s2_late = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2023-09-01', '2023-10-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create S2 image
+var s2_late_img = s2_late.median().clip(aoi);
+// Create NDVI image collection
+var s2_late_ndvi_col = s2_late.map(function(img) {
+  return img.normalizedDifference(['B8', 'B4']);//applies Normalized Difference formula
+  });
+// Create Median NDVI image
+var s2_ndvi_late = s2_late_ndvi_col.median().clip(aoi).rename('ndvi');
+
+// DIFFERENCE in NDVI
+var ndvi_diff = s2_ndvi_early.subtract(s2_ndvi_late).rename('ndvi_diff');
+print('NDVI season diff', ndvi_diff);
+// Add to map
+Map.addLayer(ndvi_diff, {min: 0, max: 0.8, palette: ['FF0000','FFBF00', 'FFFF00','00FF00']}, 'Seasonal Difference in NDVI', false);
+
+//////// NBR Trend (2016-2023) ///////////
+////// 2016 ///////
+// Sentinel 2 (S2) image collection
+var s2_col16 = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2016-06-01', '2016-10-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create NBR image collection
+var s2_nbr_col16 = s2_col16.map(function(img) {
+  return img.normalizedDifference(['B8A', 'B12']);//applies Normalized Difference formula
+  });
+// Create Median NBR image
+var s2_nbr_median16 = s2_nbr_col16.median().clip(aoi).rename('nbr');
+// Create 25th percentile NBR image
+var s2_nbr_pct16 = s2_nbr_col16.reduce(ee.Reducer.percentile([25])).clip(aoi).rename('nbr');
+// Variance in NBR
+var s2_nbr_var16 = s2_nbr_col16.reduce(ee.Reducer.variance()).clip(aoi).rename('var_nbr');
+
+////// 2017 ///////
+// Sentinel 2 (S2) image collection
+var s2_col17 = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2017-06-01', '2017-10-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create NBR image collection
+var s2_nbr_col17 = s2_col17.map(function(img) {
+  return img.normalizedDifference(['B8A', 'B12']);//applies Normalized Difference formula
+  });
+// Create Median NBR image
+var s2_nbr_median17 = s2_nbr_col17.median().clip(aoi).rename('nbr');
+// Create 25th percentile NBR image
+var s2_nbr_pct17 = s2_nbr_col17.reduce(ee.Reducer.percentile([25])).clip(aoi).rename('nbr');
+// Variance in NBR
+var s2_nbr_var17 = s2_nbr_col17.reduce(ee.Reducer.variance()).clip(aoi).rename('var_nbr');
+
+////// 2018 ///////
+// Sentinel 2 (S2) image collection
+var s2_col18 = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2018-06-01', '2018-10-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create NBR image collection
+var s2_nbr_col18 = s2_col18.map(function(img) {
+  return img.normalizedDifference(['B8A', 'B12']);//applies Normalized Difference formula
+  });
+// Create Median NBR image
+var s2_nbr_median18 = s2_nbr_col18.median().clip(aoi).rename('nbr');
+// Create 25th percentile NBR image
+var s2_nbr_pct18 = s2_nbr_col18.reduce(ee.Reducer.percentile([25])).clip(aoi).rename('nbr');
+// Variance in NBR
+var s2_nbr_var18 = s2_nbr_col18.reduce(ee.Reducer.variance()).clip(aoi).rename('var_nbr');
+
+////// 2019 ///////
+// Sentinel 2 (S2) image collection
+var s2_col19 = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2019-06-01', '2019-10-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create NBR image collection
+var s2_nbr_col19 = s2_col19.map(function(img) {
+  return img.normalizedDifference(['B8A', 'B12']);//applies Normalized Difference formula
+  });
+// Create Median NBR image
+var s2_nbr_median19 = s2_nbr_col19.median().clip(aoi).rename('nbr');
+// Create 25th percentile NBR image
+var s2_nbr_pct19 = s2_nbr_col19.reduce(ee.Reducer.percentile([25])).clip(aoi).rename('nbr');
+// Variance in NBR
+var s2_nbr_var19 = s2_nbr_col19.reduce(ee.Reducer.variance()).clip(aoi).rename('var_nbr');
+
+////// 2020 ///////
+// Sentinel 2 (S2) image collection
+var s2_col20 = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2020-06-01', '2020-10-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create NBR image collection
+var s2_nbr_col20 = s2_col20.map(function(img) {
+  return img.normalizedDifference(['B8A', 'B12']);//applies Normalized Difference formula
+  });
+// Create Median NBR image
+var s2_nbr_median20 = s2_nbr_col20.median().clip(aoi).rename('nbr');
+// Create 25th percentile NBR image
+var s2_nbr_pct20 = s2_nbr_col20.reduce(ee.Reducer.percentile([25])).clip(aoi).rename('nbr');
+// Variance in NBR
+var s2_nbr_var20 = s2_nbr_col20.reduce(ee.Reducer.variance()).clip(aoi).rename('var_nbr');
+
+////// 2021 ///////
+// Sentinel 2 (S2) image collection
+var s2_col21 = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2021-06-01', '2021-10-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create NBR image collection
+var s2_nbr_col21 = s2_col21.map(function(img) {
+  return img.normalizedDifference(['B8A', 'B12']);//applies Normalized Difference formula
+  });
+// Create Median NBR image
+var s2_nbr_median21 = s2_nbr_col21.median().clip(aoi).rename('nbr');
+// Create 25th percentile NBR image
+var s2_nbr_pct21 = s2_nbr_col21.reduce(ee.Reducer.percentile([25])).clip(aoi).rename('nbr');
+// Variance in NBR
+var s2_nbr_var21 = s2_nbr_col21.reduce(ee.Reducer.variance()).clip(aoi).rename('var_nbr');
+
+////// 2022 ///////
+// Sentinel 2 (S2) image collection
+var s2_col22 = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2022-06-01', '2022-10-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create NBR image collection
+var s2_nbr_col22 = s2_col22.map(function(img) {
+  return img.normalizedDifference(['B8A', 'B12']);//applies Normalized Difference formula
+  });
+// Create Median NBR image
+var s2_nbr_median22 = s2_nbr_col22.median().clip(aoi).rename('nbr');
+// Create 25th percentile NBR image
+var s2_nbr_pct22 = s2_nbr_col22.reduce(ee.Reducer.percentile([25])).clip(aoi).rename('nbr');
+// Variance in NBR
+var s2_nbr_var22 = s2_nbr_col22.reduce(ee.Reducer.variance()).clip(aoi).rename('var_nbr');
+
+////// 2023 ///////
+// Sentinel 2 (S2) image collection
+var s2_col23 = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+           .filterDate('2023-06-01', '2023-10-30')
+           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+           .filterBounds(aoi)
+          .map(function(img) {
+            return img.divide(10000);
+          });
+// Create NBR image collection
+var s2_nbr_col23 = s2_col23.map(function(img) {
+  return img.normalizedDifference(['B8A', 'B12']);//applies Normalized Difference formula
+  });
+// Create Median NBR image
+var s2_nbr_median23 = s2_nbr_col23.median().clip(aoi).rename('nbr');
+// Create 25th percentile NBR image
+var s2_nbr_pct23 = s2_nbr_col23.reduce(ee.Reducer.percentile([25])).clip(aoi).rename('nbr');
+// Variance in NBR
+var s2_nbr_var23 = s2_nbr_col23.reduce(ee.Reducer.variance()).clip(aoi).rename('var_nbr');
+
+/////// COMPOSITES //////
+// Median
+var nbr_median_composite  = ee.Image.cat([s2_nbr_median16, s2_nbr_median17, s2_nbr_median18, s2_nbr_median19, s2_nbr_median20, s2_nbr_median21, s2_nbr_median22, s2_nbr_median23]);
+// 25th Percentile
+var nbr_pct_composite = ee.Image.cat([s2_nbr_pct16, s2_nbr_pct17, s2_nbr_pct18, s2_nbr_pct19, s2_nbr_pct20, s2_nbr_pct21, s2_nbr_pct22, s2_nbr_pct23]);
+// Variance
+var nbr_var_composite = ee.Image.cat([s2_nbr_var16, s2_nbr_var17, s2_nbr_var18, s2_nbr_var19, s2_nbr_var20, s2_nbr_var21, s2_nbr_var22, s2_nbr_var23]);
+
+/////// Predictors ///////
+// Variance of Medians
+var nbr_var_medians = nbr_median_composite.reduce(ee.Reducer.variance()).clip(aoi).rename('nbr_var_median');
+// Variance of 25th Percentile
+var nbr_var_pct = nbr_pct_composite.reduce(ee.Reducer.variance()).clip(aoi).rename('nbr_var_pct');
+// Maximum Variance
+var nbr_max_var = nbr_var_composite.reduce(ee.Reducer.max()).clip(aoi).rename('nbr_max_var');
+
+
+//////add Topic Position Index (TPI) and resample to 10 m////////////////////////////////////////////
+var tpi = ee.Image("CSP/ERGo/1_0/Global/ALOS_mTPI").clip(aoi).rename('tpi');
+// Define tpi with resolution
+var tpi_270m = ee.Image("CSP/ERGo/1_0/Global/ALOS_mTPI").clip(aoi).rename('tpi');
+print('tpi_270m:',tpi_270m);
+// Get the projection information for a band
+var band0 = tpi_270m.select('tpi');
+print('CRS:', band0.projection().crs());
+// Resample image with bilinear method, 10m pixel spacing
+var tpi_10m = tpi_270m.resample('bilinear').reproject({
+  crs: band0.projection().crs(),
+  scale: 10
+});
+
+////////Add Compound Topographic Index (CTI) AKA Topographic Wetness Index///////////////////////////
+var cti_10m = ee.ImageCollection("projects/sat-io/open-datasets/Geomorpho90m/cti")
+                      .filterBounds(aoi)
+                      .select('b1')
+                      .median()
+                      .rename('cti')
+                      .reproject({
+                        crs:band0.projection().crs(),
+                        scale: 10
+                      });
+// Add to map
+Map.addLayer(cti_10m.clip(aoi), {min: -3, max: 6, palette: palettes.cmocean.Algae[7]}, 'Compound Topographic Index (CTI)', false);
+
+////////////Add Continuous Heat-Insolation Load Index (CHILI) from ALOS satellite///////////////////
+var dataset = ee.Image('CSP/ERGo/1_0/Global/ALOS_CHILI').clip(aoi);
+var alosChili = dataset.select('constant');
+// Reference alosChili layer and rename.
+var insolation_90m = ee.Image("CSP/ERGo/1_0/Global/ALOS_CHILI").clip(aoi);
+print('insolation_90m:',insolation_90m);
+// Get the projection information for a band.
+var band0 = insolation_90m.select('constant');
+print('CRS:', band0.projection().crs());
+// Resample to 10 m with bilinear.
+var insolation_10m = insolation_90m
+            .resample('bilinear').reproject({
+              crs: band0.projection().crs(),
+              scale: 10
+            })
+;
+print('insolation_10m:', insolation_10m);
+
+/////////////////////////////~Add Sentinel 1 SAR backscatter~/////////////////////////////////////
+// Filter the collection for the VH product from the descending track
+var collectionVH = ee.ImageCollection('COPERNICUS/S1_GRD')
+    .filter(ee.Filter.date('2023-05-01', '2023-11-30'))
+    .filter(ee.Filter.eq('instrumentMode', 'IW'))
+    .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+    .filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'))
+    .filterBounds(aoi)
+    .select(['VH']);
+print('VH', collectionVH);
+// Median value, clipped to AOI
+var vh_img = collectionVH.median().clip(aoi);
+
+// Filter the collection for the VV product from the descending track
+var collectionVV = ee.ImageCollection('COPERNICUS/S1_GRD')
+    .filter(ee.Filter.date('2023-05-01', '2023-11-30'))
+    .filter(ee.Filter.eq('instrumentMode', 'IW'))
+    .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+    .filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'))
+    .filterBounds(aoi)
+    .select(['VV']);
+print('VV', collectionVV);
+// Median value, clipped to AOI
+var vv_img = collectionVV.median().clip(aoi);
+
+////////////////////////NAIP imagery for Bands, Texture Metrics/////////////////////////////
+// NAIP Imagery (10m resolution)
+var naip_10m = ee.ImageCollection("USDA/NAIP/DOQQ")
+                      .filter(ee.Filter.date('2016-07-01','2023-09-30'))
+                      .filterBounds(aoi)
+                      .select(['R', 'B', 'G', 'N'])
+                      .median()
+                      .reproject({
+                        crs: band0.projection().crs(),
+                        scale:10
+                      });
+Map.addLayer(naip_10m.clip(aoi), {bands: ['R', 'G', 'B']}, 'NAIP 10m', false);
+// NDVI from NAIP
+var naip_NDVI = naip_10m.normalizedDifference(['N', 'R'])
+                        .rename('naip_NDVI');
+print('naip ndvi', naip_NDVI);
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~NDVI texture~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// NAIP Imagery (1m resolution)
+var naip_1m = ee.ImageCollection("USDA/NAIP/DOQQ")
+                      .filter(ee.Filter.date('2016-07-01','2023-09-30'))
+                      .filterBounds(aoi)
+                      .median();
+// Compute NDVI from 1m NAIP imagery.
+var naipNDVI_1m = naip_1m.normalizedDifference(['N', 'R']);
+// Compute median as texture of the NDVI.
+var texture = naipNDVI_1m.reduceNeighborhood({
+  reducer: ee.Reducer.median(),
+  kernel: ee.Kernel.square(3),
+});
+// Reproject to 10m resolution
+var texture_10m = texture
+      .reproject({
+          crs: band0.projection().crs(),
+          scale: 10
+      });
+// Add to map
+Map.addLayer(texture_10m.clip(aoi), {min: 0, max: 0.3}, 'median of NDVI', false);
+// Compute max as texture of the NDVI.
+var texturemx = naipNDVI_1m.reduceNeighborhood({
+  reducer: ee.Reducer.max(),
+  kernel: ee.Kernel.square(3),
+});
+// Reproject to 10m resolution
+var texturemx_10m = texturemx
+      .reproject({
+          crs: band0.projection().crs(),
+          scale: 10
+      });
+// Add to map
+Map.addLayer(texturemx_10m.clip(aoi), {min: 0.27, max: 0.64}, 'maximum NDVI texture', false);
+
+////////////////////////////////Metrics based on DEM/////////////////////////////////////////////////////
+// ELEVATION
+var usgs_elev = ee.Image("USGS/3DEP/10m").clip(aoi);
+// Visualization parameters
+var elevationVis = {
+  min: 0.0,
+  max: 4000.0,
+  gamma: 1.6,
+};
+// Add to map
+Map.addLayer(usgs_elev, elevationVis, 'Elevation', false);
+
+// SLOPE
+var usgs_ned = ee.Image('USGS/NED').clip(aoi);
+var slope = ee.Terrain.slope(usgs_ned);
+// Color palette
+var slope_palette = ['006600', '4dff4d', 'ffff4d',
+                     'ffa500', 'e06f1f', 'ff0000', '660000'];
+// Add to map
+Map.addLayer(slope, {min:0, max:100, palette: slope_palette}, 'Slope', false);
+
+////////////////////////// Terrain Ruggedness Index (TRI) //////////////////////////
+// Load SRTM Digital Elevation Model
+var tri_source = ee.Image('USGS/SRTMGL1_003').clip(aoi).rename('tri');
+// Define a neighborhood (window) for calculating the TRI
+var triNeighborhood = ee.Kernel.square({
+  radius: 1,
+  units: 'pixels',
+  normalize: true
+});
+// Calculate the TRI
+var tri = tri_source.subtract(tri_source.convolve(triNeighborhood)).abs();
+// Downscale to 10m
+var tri_10m = tri.resample('bilinear').reproject({
+  crs: tri.select('tri').projection().crs(),
+  scale: 10
+});
+print('tri 10m', tri_10m);
+// Add to map
+Map.addLayer(tri_10m.clip(aoi), {min: 0.2, max:22, palette: palettes.cmocean.Turbid[7]}, 'Terrain Ruggedness Index (TRI) 10m', false);
+
+///////////////////////// Topographical Roughness /////////////////////////////////////
+var roughness_10m = ee.ImageCollection("projects/sat-io/open-datasets/Geomorpho90m/roughness")
+                      .filterBounds(aoi)
+                      .select('b1')
+                      .median()
+                      .rename('roughness')
+                      .reproject({
+                        crs:band0.projection().crs(),
+                        scale: 10
+                      });
+
+print('roughness 10m', roughness_10m);
+// Add to map
+Map.addLayer(roughness_10m.clip(aoi), {min: 0, max: 340, palette: ['FF0000','FFBF00', 'FFFF00','00FF00']}, 'roughness 10m', false);
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ END OF DATA PREPARATION ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ MODELLING SETUP ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//////////////// Composite of above images ////////////////
+var composite  = ee.Image.cat([s2_img, s2_nbr_img, usgs_elev, slope, naip_10m, vh_img,
+              vv_img, s2_ndvi_img, s2_ndwi_img, texture_10m, texturemx_10m, insolation_10m,
+              tpi_10m, nbi, s2_awei_sh, s2_awei_nsh, msavi2, evi, cti_10m, tri_10m,
+              roughness_10m, naip_NDVI, ndvi_diff, nbr_var_medians, nbr_var_pct, nbr_max_var]);
+print('composite:', composite);
+//////////////// Use these bands for prediction ////////////////
+// All predictors
+var bands = ['B1','B2','B3','B4','B5','B6','B7','B8','B9','B10','B11','B12','ndvi',
+             'elevation', 'slope','tpi','nbr','nbi','VH','VV', 'nd_median', 'nd_max',
+             'cti','msavi2','evi','constant','roughness', 'tri', 'ndwi', 'R', 'G', 'B',
+             'N', 'naip_NDVI', 'awei_sh', 'awei_nsh', 'ndvi_diff', 'nbr_var_median',
+             'nbr_var_pct', 'nbr_max_var'];
+
+// Bands for the breakpoint-optimized model (Cascades region)
+// var bands = ['slope','nbr','msavi2', 'elevation',
+//             'nbr_var_pct', 'B2', 'B5'];
+// Bands for the breakpoint-optimized model (Columbia region)
+// var bands = ['slope', 'nbr_var_pct', 'elevation','B8',
+//               'nbi', 'B1', 'nbr'];
+
+// This property stores the land cover labels as consecutive integers starting from zero.
+var class_attr = 'Presence';
+// print('points:', points);
+
+// Colors and labels
+var clr_0 = '0C7C59'; var name_0 = 'Not Rocky Habitat';
+var clr_1 = 'C5D86D'; var name_1 = 'Rocky Habitat';
+// var clr_2 = '3DA5D9'; var name_2 = 'Other Rocky Habitat';
+
+// Discrete class colors to apply to the image
+var sld_intervals =
+'<RasterSymbolizer>' +
+ ' <ColorMap  type="intervals" extended="false" >' +
+//    '<ColorMapEntry color="#' + clr_2 + '" quantity="2" label="' + name_2 + '"/>' +
+    '<ColorMapEntry color="#' + clr_1 + '" quantity="1" label="' + name_1 + '"/>' +
+    '<ColorMapEntry color="#' + clr_0 + '" quantity="0" label="' + name_0 + '"/>' +
+        
+    '</ColorMap>' +
+'</RasterSymbolizer>';
+
+var palette = [clr_0, clr_1];
+
+/////////////////// Stratified split function ///////////////////
+// Gennadii Donchyts
+// https://code.earthengine.google.com/25ad0a18f3d120a7f34f96c463a9823b
+
+/***
+ * Splits features into training / validation sets, per class
+ * 
+ * @param {ee.FeatureCollection} features - Features to split.
+ * @param {string} property - Property used to stratify features.
+ * @param {number} ratio - Ratio used to indicate sizes of two resulting pratitions
+ */
+function stratifiedSplit(features, property, ratio) {
+  var uniqueClasses = ee.List(features.distinct([property])
+    .reduceColumns(ee.Reducer.toList(), [property])
+    .get('list'));
+
+  var featuresPerClass = uniqueClasses.map(function(v) {
+    features = features.filter(ee.Filter.eq(property, v)).randomColumn('random');
+    
+    var training = features.filter(ee.Filter.lte('random', ratio))
+      .map(function(f) { return f.set('partition', 0)});
+    
+    var validation = features.filter(ee.Filter.gte('random', ratio))
+      .map(function(f) { return f.set('partition', 1)});
+    
+    return training.merge(validation);
+  });
+  
+  var featuresNew = featuresPerClass.iterate(function(current, previous) {
+    return ee.FeatureCollection(previous).merge(ee.FeatureCollection(current));
+  }, ee.FeatureCollection([]));
+  featuresNew = ee.FeatureCollection(featuresNew);
+
+  var training = featuresNew.filter(ee.Filter.eq('partition', 0));
+  var validation = featuresNew.filter(ee.Filter.eq('partition', 1));
+
+  return { training: training, validation: validation };
+}
+
+// Create a stratified split of training and testing features
+var obj = stratifiedSplit(points, class_attr, 0.8);
+var training = obj.training;
+var testing = obj.validation;
+
+///////////////////// Overlay training data on imagery ///////////////////
+// Training data
+var training_overlay = composite.select(bands).sampleRegions({
+  collection: training,
+  properties: [class_attr],
+  scale: 10
+});
+print('training data', training_overlay);
+// Testing data
+var testing_overlay = composite.select(bands).sampleRegions({
+  collection: testing,
+  properties: [class_attr],
+  scale: 10
+});
+print('test data', testing_overlay);
+
+///////////////////// Accuracy assessment function ///////////////////
+// Function to create confusion matrix
+var print_confusion_matrix = function(classifier, name) {
+  var cm = classifier.confusionMatrix();
+  print(name + " | Error matrix", cm);
+  print(name + " | Overall accuracy", cm.accuracy());
+
+};
+// Function to create error matrix
+var print_error_matrix = function(classified_fc, actual, predicted, name) {
+  var cm = classified_fc.errorMatrix(actual, predicted);
+  print(name + " | Error matrix", cm);
+  print(name + " | Overall accuracy", cm.accuracy());
+  print(name + " | Kappa Statistic", cm.kappa());
+
+};
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ RANDOM FOREST MODEL ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// Train a RF classifier with default parameters
+var rf_trained = ee.Classifier.smileRandomForest(500)
+  .train({
+    features: training_overlay,
+    classProperty: class_attr,
+    inputProperties: bands
+  });
+// Classify the RF image with the same bands used for training.
+var rf_classified = composite.select(bands).classify(rf_trained);
+// Random Forest assessment
+print_confusion_matrix(rf_trained, 'RF training');                                  // training accuracy assessment
+var rf_testing = testing_overlay.classify(rf_trained);                              // testing accuracy assessment
+print_error_matrix(rf_testing, class_attr, 'classification', 'RF testing');         // error matrix
+// Run .explain() to see what the classifer looks like
+var dict = rf_trained.explain();
+print(rf_trained.explain());
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/////////////////////// EXPORTING ACCURACY STATISTICS ////////////////////////////
+// Function to export confusion matrix and stats as tables
+function export_cm_info(in_data, in_data_name, folder_name, cm_or_em, em_actual, em_predicted){
+  // Create cm variable
+  var cm;
+  var tbl_name;
+  // Check if running for confusion or error matrix
+  if (cm_or_em == 'cm'){
+    // Create confusion matrix
+    cm = ee.ConfusionMatrix(in_data.confusionMatrix());
+    tbl_name = in_data_name + '_cm';
+  }
+  if (cm_or_em == 'em'){
+    cm = ee.ConfusionMatrix(in_data.errorMatrix(em_actual, em_predicted));
+    tbl_name = in_data_name + '_em';
+  }
+  // Convert confusion matrix to list
+  var cm_list = cm.array().toList();
+  // Create features from confusion matrix list
+  var cm_features = cm_list.map(function(ea){
+    var ea_d = ee.Dictionary({cm_tbl_name: ea});
+    return ee.Feature(null, ea_d);
+  });
+  // Export cm information
+  Export.table.toDrive({
+    collection: ee.FeatureCollection(cm_features),
+    description: tbl_name,
+    folder: export_folder,
+    fileNamePrefix: tbl_name,
+    fileFormat: 'CSV'
+  });
+  
+  // Get additional stats
+  var accuracy = cm.accuracy();
+  var consumers_accuracy = cm.consumersAccuracy();
+  var fscore = cm.fscore().toList();
+  var kappa = cm.kappa();
+  var order = cm.order();
+  var producers_accuracy = cm.producersAccuracy();
+
+  // Create stats list
+  var stats_info_list = [
+    {'accuracy'            : accuracy},
+    {'consumers_accuracy'  : consumers_accuracy},
+    {'fscore'              : fscore},
+    {'kappa'               : kappa},
+    {'order'               : order},
+    {'producers_accuracy'  : producers_accuracy},
+    ];
+  
+  // Convert stats list to feature
+  var stats_feature = stats_info_list.map(function(dict){
+    var prop_dict = ee.Dictionary(dict);
+    var result = {
+      'prop_name' : prop_dict.keys().getString(0),
+      'prop_value': prop_dict.values()
+    };
+    return ee.Algorithms.Feature({metadata:result});
+  });
+  print('export stats_feature ' + in_data_name + ':', stats_feature);
+  
+  // Export additional stats
+   var stats_tbl_name = tbl_name + '_stats';
+   Export.table.toDrive({
+     collection: ee.FeatureCollection(stats_feature),
+     description: stats_tbl_name,
+     folder: export_folder,
+     fileNamePrefix: stats_tbl_name, 
+     fileFormat: 'CSV'
+   });
+ }
+
+// Run export confusion matrix function
+var export_folder = 'GEE_downloads';
+
+export_cm_info(rf_trained, 'cascades_rf_trained', export_folder, 'cm');
+export_cm_info(rf_testing, 'cascades_rf_testing', export_folder, 'em', class_attr, 'classification');
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/////////////////////// EXPORTING VARIABLE IMPORTANCE ////////////////////////////
+// Export explain
+var explain_dict = rf_trained.explain();
+print('explain_dict:', explain_dict);
+
+// Export
+var explain_export_name = 'cascades_rf_trained_explain';
+ Export.table.toDrive({
+   collection: ee.FeatureCollection([ee.Feature(null,explain_dict)]), 
+   description: explain_export_name,
+   folder: export_folder,
+   fileNamePrefix: explain_export_name, 
+   fileFormat: 'CSV', 
+});
+
+
+////////////////////// Create Variable Importance Chart //////////////////////
+var variableImportance = ee.Feature(null, ee.Dictionary(dict).get('importance'));
+
+var chart = 
+ui.Chart.feature.byProperty(variableImportance)
+.setChartType('ColumnChart')
+.setOptions({
+  title: 'Random Forest Variable Importance',
+  legend: {position: 'none'},
+  hAxis: {title: 'Bands'},
+  vAxis: {title: 'Importance'},
+ });
+print(chart);
+
+var test = composite.select(bands).sampleRegions({
+  collection: training,
+  properties: [class_attr],
+  scale: 10,
+});
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DISPLAY RESULTS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Map.setCenter(-121.4, 47.5, 9);
+Map.addLayer(s2_img, {bands: ['B4', 'B3', 'B2'], min: 0, max: 0.3, gamma: [1.33, 1.1, 1.0]}, 'S2 Natural Color Image', false);
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ LEGEND ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// Legend function to create legend rows
+var makeLegendRow = function(color, name) {
+      // Create the label that is actually the colored box.
+      var colorBox = ui.Label({
+        style: {
+          backgroundColor: '#' + color,
+          // Use padding to give the box height and width.
+          padding: '5px',
+          margin: '0 0 4px 0px'    // top, right, bottom, left
+        }
+      });
+      // Create the label filled with the description text.
+      var description = ui.Label({
+        value: name,
+        style: {
+          margin: '0 0 4px 6px',    // top, right, bottom, left
+          fontSize: '10px'
+        }
+      });
+      // return the panel
+      return ui.Panel({
+        widgets: [colorBox, description],
+        layout: ui.Panel.Layout.Flow('horizontal')
+      });
+};
+// Style
+var legend_label_style = {
+  fontSize: '12px',
+  margin: '0px 0px 4px 0px',      // top, right, bottom, left
+  fontWeight: 'bold',
+  textAlign: 'left',
+  position: 'top-center'
+};
+// Legend title
+var legendTitle1 = ui.Label('Land Cover', legend_label_style);
+// NR Cover Type rows
+var item0 = makeLegendRow(clr_0, name_0);
+var item1 = makeLegendRow(clr_1, name_1);
+// var item2 = makeLegendRow(clr_2, name_2);
+// Legend items
+var legend_items = [legendTitle1, item0, item1];
+// Create legend panel
+var legend_panel = ui.Panel({
+  layout: ui.Panel.Layout.flow('vertical'),
+  widgets: legend_items,
+  style: {
+    // width: '150px',
+    position: 'bottom-right'
+  }
+});
+// Add legend panel to left panel
+Map.add(legend_panel);
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~~~~~~~~~~~~~~~ EXPORTING CLASSIFIED MAP ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+//////////////////////////////// GEE Assets ////////////////////////////////
+// Export.image.toAsset({
+//   image:rf_classified,
+//   description: 'cascades_full_rhab',
+//   assetId: 'cascades_full_rhab',
+//   region: aoi,
+//   scale: 10,
+//   crs: 'EPSG:4326', //WGS 84
+//   maxPixels: 1e13});
+
+//////////// Band Data, Training Point Table > Google Drive ///////////////////
+ var sample = composite.select(bands).sampleRegions({
+ collection: points,
+ properties: ['GEEClass'],
+ scale: 10,
+ geometries: true
+ });
+ 
+Export.table.toDrive(sample, 'cascades_bands'); // for band values
+Export.table.toDrive(points, 'cascades_points'); // for presence values
+
+//////////////////////////////// Google Drive ////////////////////////////////
+Export.image.toDrive({
+ image: rf_classified,
+ description: 'cascades_rhab_output',
+ region: aoi,
+ scale: 10,
+ crs: 'EPSG:4326', //WGS 84
+ maxPixels: 1e13,
+ folder: 'GEE_downloads'
+});
+
