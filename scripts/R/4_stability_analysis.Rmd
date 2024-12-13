@@ -1,0 +1,348 @@
+---
+title: "Time Series"
+author: "Joe Celebrezze"
+date: "2024-04-17"
+output: html_document
+---
+
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(here)
+library(GGally)
+library(raster)
+library(caret)
+library(cowplot)
+library(ggpubr)
+here = here::here
+select = dplyr::select
+extract = raster::extract
+```
+
+# Data Wrangling
+```{r}
+# classified areas for stability and time series analysis
+areas_df <- read.csv(here('data', 'stability', 'time_series_areas.csv')) %>% 
+  mutate(Subregion = case_when(subregion == 'baker' ~ 'Baker',
+                            subregion == 'mt_rainier' ~ 'Mt. Rainier',
+                            subregion == 'forbidden' ~ 'Forbidden',
+                            subregion == 'eastGP' ~ 'Adams',
+                            subregion == 'CRGNSA' ~ 'CRGNSA',
+                            subregion == 'chelan' ~ 'Chelan',
+                            subregion == 'colville' ~ 'Colville',
+                            subregion == 'quincy' ~ 'Quincy',
+                            subregion == 'snoqualmie' ~ 'Snoqualmie',
+                            subregion == 'tricities' ~ 'Tri-Cities',
+                            subregion == 'westGP' ~ 'St. Helens',
+                            subregion == 'ncasc' ~ 'N. Cascades',
+                            subregion == 'winthrop' ~ 'Winthrop'))
+stability_df <- areas_df %>% 
+  filter(analysis == 'stability')
+#ts_df <- areas_df %>% 
+#  filter(analysis == 'time_series')
+
+# overall accuracy statistic for RF models from each year
+yearly_oa_df <- read.csv(here('data', 'stability', 'yearly_oa.csv')) %>% 
+  mutate(Subregion = case_when(subregion == 'baker' ~ 'Baker',
+                            subregion == 'mt_rainier' ~ 'Mt. Rainier',
+                            subregion == 'forbidden' ~ 'Forbidden',
+                            subregion == 'eastGP' ~ 'Adams',
+                            subregion == 'CRGNSA' ~ 'CRGNSA',
+                            subregion == 'chelan' ~ 'Chelan',
+                            subregion == 'colville' ~ 'Colville',
+                            subregion == 'quincy' ~ 'Quincy',
+                            subregion == 'snoqualmie' ~ 'Snoqualmie',
+                            subregion == 'tricities' ~ 'Tri-Cities',
+                            subregion == 'westGP' ~ 'St. Helens',
+                            subregion == 'ncasc' ~ 'N. Cascades',
+                            subregion == 'winthrop' ~ 'Winthrop'))
+```
+
+# Data Visualization
+## Stability Barplots
+```{r}
+# Rocky, Unstable, and Not Rocky (two y axes)
+all.stability.plot <- stability_df %>% 
+  mutate(Subregion = factor(stability_df$Subregion, levels = c(
+    'Adams', 'Forbidden', 'St. Helens', 'Baker', 'Snoqualmie',
+    'N. Cascades', 'Mt. Rainier', 'Winthrop', 'Quincy',
+    'Tri-Cities', 'Chelan', 'CRGNSA', 'Colville'))) %>% 
+  filter(class != 0) %>% 
+  mutate(stability = case_when(class %in% c(2:4) ~ 'Unstable',
+                               class == 5 ~ 'Rocky',
+                               class == 1 ~ 'Not Rocky')) %>% 
+  mutate(proportion = ifelse(class == 1, proportion*0.1, proportion)) %>% 
+  ggplot(aes(x = stability, y = proportion, fill = class_define)) +
+    geom_bar(stat = 'identity', position = 'stack') +
+    facet_wrap(~Subregion, nrow = 1, strip.position = 'bottom') +
+    scale_fill_manual(values = c('#999931', 'black', '#FF698A', '#FF2353', '#B20D30'))  +
+    scale_y_continuous(sec.axis = sec_axis(transform = ~.*10)) +
+    labs(y = 'Proportion of Classified Area', fill = 'Classification') +
+    theme_bw() +
+    theme(strip.placement = 'outside',
+          strip.background = element_blank(),
+          strip.text = element_text(face = 'bold', size = 25),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(), # for arranged plot
+          axis.text.x = element_text(face = 'bold', size = 28, angle = 90, vjust = 0.5),
+          axis.text.y = element_text(size = 34),
+          axis.ticks = element_blank(),
+          legend.title = element_text(face = 'bold', size = 24),
+          legend.text = element_text(size = 22),
+          legend.position = 'none', # for arranged plot
+          panel.border = element_blank(),
+          panel.grid = element_blank())
+all.stability.plot
+
+# Rocky and Unstable
+rocky.stability.plot <- stability_df %>% 
+  mutate(Subregion = factor(stability_df$Subregion, levels = c(
+    'Adams', 'Forbidden', 'St. Helens', 'Baker', 'Snoqualmie',
+    'N. Cascades', 'Mt. Rainier', 'Winthrop', 'Quincy',
+    'Tri-Cities', 'Chelan', 'CRGNSA', 'Colville'))) %>% 
+  filter(class != 0, class != 1) %>% 
+  mutate(stability = ifelse(class %in% c(2:4), 'Unstable', 'Rocky')) %>% 
+  ggplot(aes(x = stability, y = proportion, fill = class_define)) +
+    geom_bar(stat = 'identity', position = 'stack') +
+    facet_wrap(~Subregion, nrow = 1, strip.position = 'bottom') +
+    scale_fill_manual(values = c('black', '#FF698A', '#FF2353', '#B20D30')) +
+    labs(y = 'Proportion of Classified Area', fill = 'Classification') +
+    theme_bw() +
+    theme(strip.placement = 'outside',
+          strip.background = element_blank(),
+          strip.text = element_text(face = 'bold', size = 25),
+          axis.title.x = element_blank(),
+          #axis.title.y = element_text(face = 'bold', size = 14),
+          axis.title.y = element_blank(), # for arranged plot
+          axis.text.x = element_text(face = 'bold', size = 28, angle = 90, vjust = 0.5),
+          axis.text.y = element_text(size = 34),
+          axis.ticks = element_blank(),
+          legend.title = element_text(face = 'bold', size = 24),
+          legend.text = element_text(size = 22),
+          legend.position = 'none', # for arranged plot
+          panel.border = element_blank(),
+          panel.grid = element_blank())
+
+# Not Rocky (barplot)
+nr.stability.plot <- stability_df %>%
+  mutate(Subregion = factor(stability_df$Subregion, levels = c(
+    'Adams', 'Forbidden', 'St. Helens', 'Baker', 'Snoqualmie',
+    'N. Cascades', 'Mt. Rainier', 'Winthrop', 'Quincy',
+    'Tri-Cities', 'Chelan', 'CRGNSA', 'Colville'))) %>% 
+  filter(class == 1) %>% 
+  mutate(class_define = case_when(class == 1 ~ 'Non-\nrocky')) %>% 
+  ggplot(aes(x = class_define, y = proportion, fill = class_define)) +
+    geom_bar(stat = 'identity', fill = '#999931', width = 0.5) +
+    facet_wrap(~Subregion, nrow = 1, strip.position = 'top') +
+    labs(y = 'Proportion of Classified Area', fill = 'Classification') +
+    scale_x_discrete(position = 'top') +
+    scale_y_reverse() +
+    theme_bw() +
+    theme(strip.placement = 'outside',
+          strip.background = element_blank(),
+          strip.text = element_blank(),
+          axis.title.x = element_blank(),
+          #axis.title.y = element_text(face = 'bold', size = 14),
+          axis.title.y = element_blank(), # for arranged plot
+          axis.text.x = element_text(face = 'bold', size = 28, angle = 90, vjust = 0.5),
+          axis.text.y = element_text(size = 26),
+          axis.ticks = element_blank(),
+          legend.title = element_text(face = 'bold', size = 24),
+          legend.text = element_text(size = 22),
+          legend.position = 'none', # for arranged plot
+          panel.border = element_blank(),
+          panel.grid = element_blank())
+
+# Not Rocky (dotplot)
+nr.stability.dotplot <- stability_df %>%
+  mutate(Subregion = factor(stability_df$Subregion, levels = c(
+    'Adams', 'Forbidden', 'St. Helens', 'Baker', 'Snoqualmie',
+    'N. Cascades', 'Mt. Rainier', 'Winthrop', 'Quincy',
+    'Tri-Cities', 'Chelan', 'CRGNSA', 'Colville'))) %>% 
+  filter(class == 1) %>% 
+  mutate(class_define = case_when(class == 1 ~ '\nNon-\nrocky')) %>% 
+  ggplot(aes(x = class_define, y = proportion, fill = class_define)) +
+    geom_point(color = '#999931', size = 14) +
+    facet_wrap(~Subregion, nrow = 1, strip.position = 'top') +
+    labs(y = 'Proportion of Classified Area', fill = 'Classification') +
+    scale_x_discrete(position = 'top') +
+    scale_y_reverse(limits = c(1, 0.825), breaks = c(1, 0.925, 0.85)) +
+    theme_bw() +
+    theme(strip.placement = 'outside',
+          strip.background = element_blank(),
+          strip.text = element_blank(),
+          axis.title.x = element_blank(),
+          #axis.title.y = element_text(face = 'bold', size = 14),
+          axis.title.y = element_blank(), # for arranged plot
+          axis.text.x = element_text(face = 'bold', size = 28, angle = 270),
+          axis.text.y = element_text(size = 34),
+          axis.ticks = element_blank(),
+          legend.title = element_text(face = 'bold', size = 24),
+          legend.text = element_text(size = 22),
+          legend.position = 'none', # for arranged plot
+          panel.border = element_blank(),
+          panel.grid = element_blank())
+
+# Legends
+legend.plot <- stability_df %>% 
+  filter(class != 0, class != 1, class != 5) %>% 
+  mutate(unstable_define = case_when(class == 2 ~ 'Rocky 1/4',
+                                     class == 3 ~ 'Rocky 2/4',
+                                     class == 4 ~ 'Rocky 3/4')) %>% 
+  ggplot(aes(x = unstable_define, y = proportion, fill = unstable_define)) +
+    geom_bar(stat = 'identity') +
+    labs(fill = 'Unstable Classification') +
+    scale_fill_manual(values = c('#FF698A', '#FF2353', '#B20D30')) +
+    theme_bw() +
+    theme(legend.title = element_text(face = 'bold', size = 26),
+          legend.text = element_text(size = 24),
+          legend.position = 'right')
+stability.legend <- get_legend(legend.plot)
+
+legend.plot2 <- stability_df %>% 
+  filter(class != 0) %>% 
+  mutate(unstable_define = case_when(class == 1 ~ 'Non-Rocky',
+                                     class == 2 ~ 'Unstable: Rocky 1/4',
+                                     class == 3 ~ 'Unstable: Rocky 2/4',
+                                     class == 4 ~ 'Unstable: Rocky 3/4',
+                                     class == 5 ~ 'Rocky')) %>% 
+  ggplot(aes(x = unstable_define, y = proportion, fill = unstable_define)) +
+    geom_bar(stat = 'identity') +
+    labs(fill = 'Classification') +
+    scale_fill_manual(values = c('#999931', 'black', '#FF698A', '#FF2353', '#B20D30')) +
+    theme_bw() +
+    theme(legend.title = element_text(face = 'bold', size = 26),
+          legend.text = element_text(size = 24),
+          legend.position = 'right')
+classification.legend <- get_legend(legend.plot2)
+
+# y axis title
+stability.yaxis <- ggdraw() +
+  draw_label(label = 'Proportion of Classified Area', angle = 90,
+             size = 50, fontface = 'bold', vjust = 4) +
+  theme(plot.margin = margin(0, 0, 0, 0))
+
+stability.yaxis2 <- ggdraw() +
+  draw_label(label = 'Proportion of Classified Area \n(Rocky)', angle = 270,
+             size = 50, fontface = 'bold', vjust = 1.5) +
+  theme(plot.margin = margin(0, 0, 0, 0))
+
+# Arranged
+stability.arranged.plots <- plot_grid(rocky.stability.plot, nr.stability.plot, ncol = 1,
+                                      rel_heights = c(2.5, 1))
+stability.main.plot <- plot_grid(stability.yaxis, stability.arranged.plots,
+                                 stability.legend, nrow = 1,
+                                 rel_widths = c(0.75, 4, 1.3))
+stability.main.plot
+ggsave(here('figures', 'from-R', 'stability-plot', 'stability_barplot_main.png'), height = 12, width = 34)
+
+stability.main.plot2 <- plot_grid(stability.yaxis, rocky.stability.plot, nrow = 1,
+                                 rel_widths = c(0.75, 4))
+stability.main.plot2
+ggsave(here('figures', 'from-R', 'stability-plot', 'stability_barplot_no_norocky.png'), height = 12, width = 34)
+
+stability.main.plot3 <- plot_grid(stability.yaxis, all.stability.plot,
+                                 stability.yaxis2,
+                                 classification.legend, nrow = 1,
+                                 rel_widths = c(0.75, 4, 0.75, 1.3))
+stability.main.plot3
+ggsave(here('figures', 'from-R', 'stability-plot', 'stability_barplot_main_updated.png'), height = 12, width = 40)
+
+stability.plot.nolegend <- plot_grid(stability.yaxis, stability.arranged.plots,
+                                 nrow = 1, rel_widths = c(0.75, 4))
+ggsave(here('figures', 'from-R', 'stability-plot', 'stability_barplot_nolegend.png'), height = 18, width = 34)
+```
+
+
+### Model Accuracy Time Series
+```{r}
+zoomed_out_oaTS <- yearly_oa_df %>% 
+  ggplot(aes(x = year, y = overall_acc*100, color = Subregion)) +
+    geom_line(linewidth = 2) +
+    scale_y_continuous(limits = c(60,100), breaks = c(60, 70, 80, 90, 100)) +
+    scale_x_continuous(breaks = c(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023)) +
+    labs(y = 'Overall Accuracy (%)', x = 'Year', color = 'Subregion') +
+    theme_bw() +
+    theme(axis.text = element_text(size = 14),
+          axis.title = element_text(face = 'bold', size = 14),
+          legend.title = element_text(face = 'bold', size = 14),
+          legend.text = element_text(size = 12),
+          panel.grid.minor.x = element_blank())
+zoomed_out_oaTS
+
+zoomed_in_oaTS <- yearly_oa_df %>% 
+  mutate(Subregion = factor(yearly_oa_df$Subregion, levels = c(
+    'Adams', 'Baker', 'Forbidden', 'Mt. Rainier', 'N. Cascades', 'Snoqualmie', 'St. Helens',
+    'Chelan', 'Colville', 'CRGNSA', 'Quincy', 'Tri-Cities'))) %>% 
+  ggplot(aes(x = year, y = overall_acc*100, color = Subregion)) +
+    geom_line(linewidth = 2) +
+    scale_y_continuous(limits = c(92,100), breaks = c(94, 96, 98, 100)) +
+    scale_x_continuous(breaks = c(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023)) +
+    scale_color_manual(values = c(
+      'darkred', '#f21821', '#f8631f', '#fa931a', '#ffc309', '#fff600', 'black',
+      'gray50', '#04b99e', '#01aef3', '#8f59a7', '#bf168d', 'blue')) +
+    labs(y = 'Overall Accuracy (%)', x = 'Year', color = 'Subregion') +
+    theme_bw() +
+    theme(axis.text = element_text(size = 14),
+          axis.title = element_text(face = 'bold', size = 14),
+          #legend.title = element_text(face = 'bold', size = 14),
+          legend.title = element_blank(),
+          legend.text = element_text(face = 'bold', size = 14),
+          axis.ticks = element_blank(),
+          panel.grid.minor.x = element_blank())
+zoomed_in_oaTS
+
+ggsave(here('figures', 'from-R', 'stability-plot', 'oa_over_time.png'), height = 7, width = 7)
+```
+
+### Stability Ratio
+#### Horizontal
+```{r}
+stability.ratio.plot <- stability_df %>%
+  filter(class != 0) %>% 
+  select(class, proportion, Subregion) %>% 
+  pivot_wider(names_from = class, values_from = proportion) %>% 
+  mutate(stability_ratio = (`5`)/(`2` + `3` + `4`)) %>% 
+  mutate(Subregion = fct_reorder(Subregion, desc(stability_ratio))) %>% 
+  ggplot(aes(x = Subregion, y = stability_ratio)) +
+    geom_point(size = 16) +
+    geom_hline(yintercept = 1, linetype = 'dashed', linewidth = 2) +
+    labs(y = 'Stability Ratio') +
+    scale_y_continuous(limits = c(0, 3.25)) +
+    theme_bw() +
+    theme(axis.text.x = element_text(face = 'bold', size = 30, angle = 30, vjust = 0.5),
+          axis.text.y = element_text(size = 25),
+          axis.title.y = element_text(face = 'bold', size = 30),
+          axis.title.x = element_blank(),
+          axis.ticks = element_blank(),
+          panel.grid = element_blank(),
+          panel.border = element_blank())
+stability.ratio.plot
+ggsave(here('figures', 'from-R', 'stability-plot', 'stability_ratio_horizontal.png'), height = 7, width = 20)
+```
+
+#### Vertical
+```{r}
+stability.ratio.plotV <- stability_df %>%
+  filter(class != 0) %>% 
+  select(class, proportion, Subregion) %>% 
+  pivot_wider(names_from = class, values_from = proportion) %>% 
+  mutate(stability_ratio = (`5`)/(`2` + `3` + `4`)) %>% 
+  mutate(Subregion = fct_reorder(Subregion, desc(stability_ratio))) %>% 
+  ggplot(aes(y = Subregion, x = stability_ratio)) +
+    geom_point(size = 16) +
+    geom_vline(xintercept = 1, linetype = 'dashed', linewidth = 2) +
+    labs(x = 'Stability Ratio') +
+    scale_x_continuous(limits = c(0, 3.25)) +
+    theme_bw() +
+    theme(axis.text.y = element_text(face = 'bold', size = 30),
+          axis.text.x = element_text(size = 25),
+          axis.title.x = element_text(face = 'bold', size = 30),
+          axis.title.y = element_blank(),
+          axis.ticks = element_blank(),
+          panel.grid.minor.y = element_blank())
+stability.ratio.plotV
+ggsave(here('figures', 'from-R', 'stability-plot', 'stability_ratio_vertical.png'), height = 20, width = 7)
+```
