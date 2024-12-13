@@ -15,6 +15,8 @@ It also includes *point_bands* data, which - for each sub region and region - in
 Third, it includes *stability-analysis* data, derived from the stability_analysis GEE script (described below).
 Lastly, it includes *varimp* data, which are compilations of variable importance for regional and subregional models (both *full* and *optimized*).
 
+------------------------
+
 **scripts**
 
 This folder contains all *R* and *GEE* scripts that were used for analysis and visualization. Each script is described below:
