@@ -1,0 +1,37 @@
+---
+title: "Testing Data Wrangling"
+author: "Joe Celebrezze"
+date: "2025-01-24"
+output: html_document
+---
+
+# Set-up
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(here)
+here = here::here
+columbia_test_data <- read.csv(here('data', 'point_bands', 'columbia_testing_points_GEE.csv'))
+cascades_test_data <- read.csv(here('data', 'point_bands', 'cascades_testing_points_GEE.csv'))
+```
+
+
+# Data Wrangling
+```{r}
+columbia_test_data_clean <- columbia_test_data %>% 
+  mutate(x = as.numeric(str_extract(.geo, "(?<=\\[)-?\\d+\\.\\d+")),
+         y = as.numeric(str_extract(.geo, "(?<=,)-?\\d+\\.\\d+"))) %>% 
+  select(Presence, x, y)
+
+cascades_test_data_clean <- cascades_test_data %>% 
+  mutate(x = as.numeric(str_extract(.geo, "(?<=\\[)-?\\d+\\.\\d+")),
+         y = as.numeric(str_extract(.geo, "(?<=,)-?\\d+\\.\\d+"))) %>% 
+  select(Presence, x, y)
+```
+
+# Saving Data
+```{r}
+write.csv(columbia_test_data_clean, here('data', 'point_bands', 'columbia_testing_points_clean.csv'))
+write.csv(cascades_test_data_clean, here('data', 'point_bands', 'cascades_testing_points_clean.csv'))
+```
+

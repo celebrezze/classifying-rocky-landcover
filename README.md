@@ -26,6 +26,8 @@ This folder contains all **R** and **GEE** scripts that were used for analysis a
 
 4_stability_analysis.Rmd: The visualization for the stability analysis (Figure 11) went through many iterations. This script includes various ways of visualizing that data, saving them all in the *stability-plot* folder; therefore, it includes code necessary for Figure 11
 
+cleaning_testing_points_data.Rmd: This script was written in response to a reviewer's comment to visualize testing/training data. It wrangles the testing data exported from GEE to a usable format for mapping in QGIS
+
 **GEE**
 
 main_random_forest: This was the script relied most heavily on, to prepare data and run random forest models in GEE
